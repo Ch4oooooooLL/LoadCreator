@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 2,
+  "caseKind": "random-psd",
+  "solver": "optistruct",
+  "solverVersion": "2022",
+  "modelUnits": "N-mm-s",
+  "externalReferences": [
+    {
+      "kind": "spc",
+      "id": 9001,
+      "label": "existing SPC set",
+      "status": "UNVERIFIED_EXTERNAL",
+      "usedBy": "random-psd"
+    },
+    {
+      "kind": "node",
+      "id": 1001,
+      "label": "excitation node",
+      "status": "UNVERIFIED_EXTERNAL",
+      "usedBy": "random-psd"
+    }
+  ],
+  "generatedIdMap": [
+    {
+      "kind": "dload",
+      "key": "Battery_PSD_Z#dload",
+      "id": 300101
+    },
+    {
+      "kind": "rload",
+      "key": "Battery_PSD_Z#rload2",
+      "id": 310001
+    },
+    {
+      "kind": "table",
+      "key": "Battery_PSD_Z#tabrnd1",
+      "id": 400001
+    },
+    {
+      "kind": "random",
+      "key": "Battery_PSD_Z#randps",
+      "id": 400101
+    },
+    {
+      "kind": "method",
+      "key": "Battery_PSD_Z#eigrl",
+      "id": 500001
+    },
+    {
+      "kind": "freq",
+      "key": "Battery_PSD_Z#freq",
+      "id": 500101
+    },
+    {
+      "kind": "damping",
+      "key": "Battery_PSD_Z#damp",
+      "id": 500201
+    },
+    {
+      "kind": "subcase",
+      "key": "Battery_PSD_Z#mfreq",
+      "id": 101
+    },
+    {
+      "kind": "subcase",
+      "key": "Battery_PSD_Z#random",
+      "id": 102
+    },
+    {
+      "kind": "spcd",
+      "key": "Battery_PSD_Z#spcd",
+      "id": 320001
+    }
+  ],
+  "validationStatus": "generated"
+}

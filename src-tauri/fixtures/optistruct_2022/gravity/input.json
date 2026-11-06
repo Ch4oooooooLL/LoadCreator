@@ -1,0 +1,17 @@
+{
+  "projectName": "gravity",
+  "case": {
+    "kind": "gravity",
+    "parameters": {
+      "name": "Gravity_Z",
+      "modelUnits": "N-mm-s",
+      "magnitudeG": 1,
+      "direction": [
+        0,
+        0,
+        -1
+      ],
+      "existingSpcSetId": 900001
+    }
+  }
+}

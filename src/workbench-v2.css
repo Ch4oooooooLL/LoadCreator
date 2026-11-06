@@ -1,0 +1,159 @@
+/* ==========================================================================
+   Workbench v2 · live visual preview, tooltips, FOPS, sticky layout
+   ========================================================================== */
+
+/* App-like shell: sidebar fixed, main scrolls internally so the live preview
+   can stay pinned while the (long) parameter form scrolls. */
+.wbShell { height: 100vh; }
+.wbSidebar { height: 100vh; }
+.wbMain { height: 100vh; overflow-y: auto; }
+
+.wbGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.12fr) minmax(360px, 0.88fr);
+  gap: 18px;
+  align-items: start;
+}
+.wbPreviewCol {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* ---- field label / inline help ------------------------------------- */
+.wbFieldLabel { color: #4d655a; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.wbFieldLabel em { font-style: normal; color: #9aac9f; font-size: 10px; }
+
+/* ---- info tooltip -------------------------------------------------- */
+.infoTip {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; border-radius: 50%;
+  background: #dceee2; color: #1d7a43;
+  font-size: 9.5px; font-weight: 700; line-height: 1;
+  cursor: help; flex: 0 0 auto; user-select: none;
+  transition: background .14s ease, transform .14s ease;
+}
+.infoTip:hover, .infoTip:focus-visible { background: #bfe6cc; transform: scale(1.08); }
+.infoTipBubble {
+  position: absolute; z-index: 60;
+  left: 50%; transform: translateX(-50%);
+  top: calc(100% + 7px);
+  width: max-content; max-width: 300px;
+  padding: 9px 11px;
+  background: #16261e; color: #e7eee9;
+  border-radius: 9px;
+  font-size: 11.5px; line-height: 1.6; font-weight: 400;
+  text-align: left; white-space: normal;
+  box-shadow: 0 14px 34px -10px rgba(10, 25, 16, .6);
+  display: flex; flex-direction: column; gap: 3px;
+}
+.infoTipBubble b { color: #8ff0ae; font-size: 11px; }
+.infoTipBubble::before {
+  content: ""; position: absolute; top: -4px; left: 50%;
+  transform: translateX(-50%) rotate(45deg);
+  width: 8px; height: 8px; background: #16261e;
+}
+
+/* ---- live preview card -------------------------------------------- */
+.livePreview {
+  background: linear-gradient(180deg, #ffffff, #f6fbf8);
+  border: 1px solid #d9e6de;
+  border-radius: 14px;
+  padding: 14px 15px;
+  box-shadow: 0 16px 34px -28px rgba(20, 60, 40, .55);
+}
+.livePreviewHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.livePreviewEyebrow { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 10px; letter-spacing: .12em; color: #4f8a62; font-weight: 700; }
+.livePulse { width: 7px; height: 7px; border-radius: 50%; background: #3fae68; animation: livePulse 1.9s ease-out infinite; }
+@keyframes livePulse {
+  0% { box-shadow: 0 0 0 0 rgba(63, 174, 104, .5); }
+  70% { box-shadow: 0 0 0 7px rgba(63, 174, 104, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(63, 174, 104, 0); }
+}
+.livePreviewHead h3 { margin: 3px 0 0; font-size: 15px; color: #17331f; }
+.liveBadge { font-size: 10px; color: #1d7a43; background: #e6f6ec; border: 1px solid #cfe9d8; border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
+.livePreviewBody { display: flex; flex-direction: column; gap: 12px; }
+.livePreviewNote { margin: 10px 0 0; font-size: 10.5px; color: #93a39a; line-height: 1.5; }
+.livePreviewPlaceholder { color: #93a39a; font-size: 12px; padding: 22px; text-align: center; }
+
+.vizCard { background: #fff; border: 1px solid #e4ece7; border-radius: 11px; overflow: hidden; }
+.vizCardHead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 9px 11px 6px; }
+.vizCardHead h4 { margin: 0; font-size: 12.5px; color: #2b4a38; }
+.vizCardHead > div > span { display: block; font-size: 10px; color: #93a39a; margin-top: 1px; }
+.vizCardBody { padding: 0 8px 8px; }
+.vizSplit { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: stretch; }
+.vizSplit .vizCard { height: 100%; }
+
+.gizmoWrap { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 2px 0; }
+.gizmoLabel { font-size: 11px; color: #5d7268; font-family: var(--mono, monospace); }
+
+.liveStats { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 8px; }
+.liveStat { background: #f3f8f4; border: 1px solid #e2ece5; border-radius: 9px; padding: 7px 9px; display: flex; flex-direction: column; gap: 2px; }
+.liveStat span { font-size: 10px; color: #7c8f86; }
+.liveStat b { font-size: 14px; color: #17331f; }
+.liveStat.on b { color: #1d7a43; }
+.liveStat.amber b { color: #a9701a; }
+
+/* ---- charts -------------------------------------------------------- */
+.chartSvg { width: 100%; height: auto; display: block; }
+.chartGrid { stroke: #e8f0ea; stroke-width: 1; }
+.chartTick { fill: #93a39a; font-size: 10px; font-family: var(--mono, monospace); }
+.chartAxisZero { stroke: #cfd8d2; stroke-width: 1; stroke-dasharray: 3 3; }
+.chartMarker { stroke: #c08a2a; stroke-width: 1.2; stroke-dasharray: 4 3; }
+.chartMarkerLabel { fill: #a9701a; font-size: 9.5px; }
+.chartAxisLabel { fill: #6c7a71; font-size: 10.5px; }
+.chartTrack { stroke: #e6ede8; stroke-width: 6; stroke-linecap: round; }
+.chartSegLabel { fill: #5d7268; font-size: 9.5px; }
+.chartUnit { fill: #94a29a; font-size: 9.5px; }
+.chartEmpty {
+  display: grid; place-items: center;
+  color: #94a29a; font-size: 12px;
+  background: #f6f9f7; border: 1px dashed #dfe7e2; border-radius: 10px;
+}
+
+/* ---- DOF grid / mini bars / timeline ------------------------------ */
+.dofGrid { display: flex; flex-direction: column; gap: 3px; font-size: 11px; }
+.dofHead, .dofRow { display: grid; grid-template-columns: minmax(60px, 1fr) repeat(6, 24px); align-items: center; gap: 2px; }
+.dofHeadCell { text-align: center; font-size: 9px; color: #93a39a; font-family: var(--mono, monospace); }
+.dofRowLabel { font-family: var(--mono, monospace); color: #41604f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dofCell { text-align: center; color: #c7d2cb; background: #f5f8f6; border-radius: 5px; line-height: 20px; font-size: 10px; }
+.dofCell.on { color: #fff; background: #2f7a52; }
+
+.miniBars { display: flex; flex-direction: column; gap: 6px; }
+.miniBarRow { display: grid; grid-template-columns: 86px 1fr auto; align-items: center; gap: 8px; font-size: 11px; }
+.miniBarLabel { color: #5d7268; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.miniBarTrack { height: 8px; background: #eef4f0; border-radius: 999px; overflow: hidden; }
+.miniBarTrack i { display: block; height: 100%; background: linear-gradient(90deg, #3fae68, #83dfa5); border-radius: 999px; }
+.miniBarValue { font-family: var(--mono, monospace); color: #2b4a38; }
+
+.timelineStats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 10.5px; color: #7c8f86; padding: 2px 4px 0; }
+.timelineStats b { color: #2b4a38; }
+
+/* ---- tabular project name (now inline editable) ------------------- */
+.tabProjectTag { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: #4d655a; background: #f0f5f1; border: 1px solid #dce7df; border-radius: 8px; padding: 5px 10px; }
+.tabProjectTag input { border: 0; background: transparent; font: 12px var(--mono, monospace); color: #234634; width: 150px; padding: 0; }
+.tabProjectTag input:focus { outline: none; }
+
+/* ---- responsive ---------------------------------------------------- */
+@media (max-width: 1180px) {
+  .wbGrid { grid-template-columns: minmax(0, 1fr) minmax(320px, 0.8fr); }
+}
+@media (max-width: 1100px) {
+  .wbShell { height: auto; }
+  .wbMain { height: auto; overflow: visible; }
+  .wbSidebar { height: auto; }
+  .wbGrid { grid-template-columns: 1fr; }
+  .wbPreviewCol { position: static; max-height: none; overflow: visible; }
+}
+@media (max-width: 560px) {
+  .vizSplit { grid-template-columns: 1fr; }
+  .infoTipBubble { left: auto; right: 0; transform: none; max-width: 240px; }
+  .infoTipBubble::before { left: auto; right: 6px; transform: rotate(45deg); }
+}

@@ -6,3 +6,7 @@
 
 # --- Local tooling session cache ---------------------------------------------
 .playwright-cli/
+
+# --- Built installers (regenerate with package-exe.bat / package:exe) ----------
+/output/installers/
+/.pkg-test/

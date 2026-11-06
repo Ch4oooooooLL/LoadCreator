@@ -1,0 +1,19 @@
+{
+  "projectName": "nodal_static",
+  "case": {
+    "kind": "nodal-static",
+    "parameters": {
+      "name": "Front_Load",
+      "modelUnits": "N-mm-s",
+      "loads": [
+        {
+          "nodeId": 1001,
+          "fx": 100,
+          "fz": -50,
+          "label": "front"
+        }
+      ],
+      "existingSpcSetId": 900001
+    }
+  }
+}

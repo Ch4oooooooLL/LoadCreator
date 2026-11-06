@@ -1,0 +1,24 @@
+{
+  "profile": "hm2023.0-rad2022-p0",
+  "status": "NOT_RUN",
+  "environment": {
+    "hypermesh": "2023.0",
+    "radioss": "2022",
+    "recordedAt": null
+  },
+  "experiments": {
+    "P0-A": {
+      "status": "NOT_RUN",
+      "notes": "Starter 引用关联"
+    },
+    "P0-B": {
+      "status": "NOT_RUN",
+      "notes": "Single File Engine 追加"
+    },
+    "P0-C": {
+      "status": "NOT_RUN",
+      "notes": "往返导出与求解"
+    }
+  },
+  "reason": "无 HyperMesh 2023.0 / Radioss 2022 授权环境，未执行亦未伪造实测结果"
+}

@@ -1,0 +1,81 @@
+{
+  "projectName": "ROPS_Demo",
+  "case": {
+    "kind": "radioss-rops",
+    "parameters": {
+      "name": "ROPS_CASE_1",
+      "runName": "ROPS_CASE",
+      "solver": "radioss",
+      "solverVersion": "2022",
+      "units": {
+        "input": {
+          "mass": "kg",
+          "length": "mm",
+          "time": "ms"
+        },
+        "work": {
+          "mass": "kg",
+          "length": "mm",
+          "time": "ms"
+        },
+        "confirmedAgainstTargetModel": true
+      },
+      "references": {
+        "loadTarget": {
+          "kind": "node",
+          "nodeId": 1001
+        },
+        "constraints": [
+          {
+            "target": {
+              "kind": "nodes",
+              "nodeIds": [
+                2001,
+                2002
+              ]
+            },
+            "dofs": [
+              true,
+              true,
+              true,
+              false,
+              false,
+              false
+            ]
+          }
+        ]
+      },
+      "loading": {
+        "direction": "X",
+        "curve": [
+          {
+            "time": 0,
+            "value": 0
+          },
+          {
+            "time": 0.05,
+            "value": 40
+          },
+          {
+            "time": 0.1,
+            "value": 40
+          }
+        ]
+      },
+      "engine": {
+        "endTime": 0.1,
+        "animation": {
+          "startTime": 0,
+          "interval": 0.01
+        },
+        "timeHistoryInterval": 0.001,
+        "timeStep": {
+          "mode": "natural"
+        }
+      },
+      "idPolicy": {
+        "generatedStart": 800000
+      }
+    }
+  }
+}

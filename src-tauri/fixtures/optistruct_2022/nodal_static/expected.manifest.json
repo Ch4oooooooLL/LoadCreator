@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 2,
+  "caseKind": "nodal-static",
+  "solver": "optistruct",
+  "solverVersion": "2022",
+  "modelUnits": "N-mm-s",
+  "externalReferences": [
+    {
+      "kind": "spc",
+      "id": 900001,
+      "label": "existing SPC set",
+      "status": "UNVERIFIED_EXTERNAL",
+      "usedBy": "nodal-static"
+    },
+    {
+      "kind": "node",
+      "id": 1001,
+      "label": "front",
+      "status": "UNVERIFIED_EXTERNAL",
+      "usedBy": "nodal-static"
+    }
+  ],
+  "generatedIdMap": [
+    {
+      "kind": "load",
+      "key": "Front_Load#load",
+      "id": 300001
+    },
+    {
+      "kind": "subcase",
+      "key": "Front_Load#sub",
+      "id": 101
+    }
+  ],
+  "validationStatus": "generated"
+}

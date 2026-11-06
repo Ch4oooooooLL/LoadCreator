@@ -1,7 +1,7 @@
 {
   "name": "loadcreator",
   "private": true,
-  "version": "0.1.8",
+  "version": "2.0.0",
   "description": "LoadCreator - FEM 载荷表格转换器",
   "type": "module",
   "scripts": {
@@ -9,7 +9,8 @@
     "build": "tsc --noEmit && vite build",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "package:exe": "powershell -NoProfile -ExecutionPolicy Bypass -File package-exe.ps1"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.0",

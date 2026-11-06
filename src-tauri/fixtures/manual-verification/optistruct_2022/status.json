@@ -1,0 +1,11 @@
+{
+  "status": "pending",
+  "reason": "无 OptiStruct 2022 授权求解环境",
+  "moduleStatus": {
+    "nodal-static": "pending",
+    "gravity": "pending",
+    "normal-modes": "pending",
+    "random-psd": "pending"
+  },
+  "updatedAt": "2026-11-06"
+}

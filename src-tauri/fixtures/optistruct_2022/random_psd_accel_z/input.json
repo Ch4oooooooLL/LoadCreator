@@ -1,0 +1,59 @@
+{
+  "projectName": "random_psd_accel_z",
+  "case": {
+    "kind": "random-psd",
+    "parameters": {
+      "name": "Battery_PSD_Z",
+      "modelUnits": "N-mm-s",
+      "solverVersion": "2022",
+      "excitation": {
+        "kind": "base-acceleration",
+        "nodeId": 1001,
+        "component": 3,
+        "existingSpcSetId": 9001,
+        "inputPsdUnit": "g^2/Hz",
+        "referenceAmplitudeG": 1
+      },
+      "spectrum": {
+        "interpolation": "LOG-LOG",
+        "outOfRange": "ERROR",
+        "points": [
+          {
+            "frequencyHz": 10,
+            "psd": 0.003
+          },
+          {
+            "frequencyHz": 100,
+            "psd": 0.006
+          },
+          {
+            "frequencyHz": 200,
+            "psd": 0.003
+          }
+        ]
+      },
+      "frequency": {
+        "minHz": 10,
+        "maxHz": 200,
+        "stepHz": 1
+      },
+      "modal": {
+        "minHz": 0,
+        "maxHz": 300,
+        "solver": "LANCZOS"
+      },
+      "damping": {
+        "kind": "modal-critical-ratio",
+        "ratio": 0.02
+      },
+      "output": {
+        "profile": "PSD_AND_RMS",
+        "h3d": true,
+        "stress": true,
+        "displacement": true,
+        "acceleration": true
+      },
+      "confirmExcitedDofInSpc": true
+    }
+  }
+}

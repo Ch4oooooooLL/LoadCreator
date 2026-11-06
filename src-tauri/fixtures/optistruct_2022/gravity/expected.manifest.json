@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 2,
+  "caseKind": "gravity",
+  "solver": "optistruct",
+  "solverVersion": "2022",
+  "modelUnits": "N-mm-s",
+  "externalReferences": [
+    {
+      "kind": "spc",
+      "id": 900001,
+      "label": "existing SPC set",
+      "status": "UNVERIFIED_EXTERNAL",
+      "usedBy": "gravity"
+    }
+  ],
+  "generatedIdMap": [
+    {
+      "kind": "load",
+      "key": "Gravity_Z#grav",
+      "id": 300001
+    },
+    {
+      "kind": "subcase",
+      "key": "Gravity_Z#sub",
+      "id": 101
+    }
+  ],
+  "validationStatus": "generated"
+}
