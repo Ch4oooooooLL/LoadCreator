@@ -80,6 +80,22 @@ function Cleanup-Intermediates([string]$srcInstaller) {
 }
 
 try {
+    # ---- ensure the Rust toolchain is discoverable ----------------------
+    # cargo/rustc normally live in %USERPROFILE%\.cargo\bin, but that folder
+    # is frequently absent from PATH when the .bat is launched by double-click
+    # in Explorer. Without it, "tauri build" fails with:
+    #   failed to run 'cargo metadata' ... program not found
+    $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
+    if (Test-Path -LiteralPath $cargoBin) {
+        if ((($env:PATH -split ';') -notcontains $cargoBin)) {
+            $env:PATH = $cargoBin + ';' + $env:PATH
+        }
+    }
+    if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+        Fail ("cargo not found. Install the Rust toolchain from https://rustup.rs " +
+              "or add %USERPROFILE%\.cargo\bin to PATH.")
+    }
+
     # ---- read product info ----------------------------------------------
     $confPath = Join-Path $root "src-tauri\tauri.conf.json"
     if (-not (Test-Path -LiteralPath $confPath)) { Fail "config not found: $confPath" }

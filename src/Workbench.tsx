@@ -4,8 +4,9 @@ import NumericInput from "@/components/NumericInput";
 import InfoTip from "@/components/InfoTip";
 import ModulePreview from "@/modules/previews/ModulePreview";
 import TabularModule from "@/modules/tabular/TabularModule";
-import { FALLBACK_MODULES, MODULE_GROUPS, STATUS_LABELS } from "@/app/moduleRegistry";
+import { FALLBACK_MODULES, STATUS_LABELS, moduleMeta } from "@/app/moduleRegistry";
 import ModuleGallery from "@/app/ModuleGallery";
+import TitleBar from "@/components/TitleBar";
 import {
   buildCase,
   exportCaseFiles,
@@ -511,39 +512,50 @@ export default function Workbench() {
     }
   }
 
-  const groups = MODULE_GROUPS;
   const isRadioss = activeId === "radioss-rops" || activeId === "radioss-fops";
 
+  const atHome = activeId === "home";
+  // Modules that manage their own page layout (the tabular workspace has its own
+  // stepper and full-width table) opt out of the per-module sidebar.
+  const selfContained = activeId === "tabular-load";
+  const showSidebar = !atHome && !selfContained;
+
   return (
-    <div className="wbShell">
-      <aside className="wbSidebar">
-        <div className="wbBrand"><span className="wbBrandMark">LC</span><div><b>LoadCreator 2.0</b><small>CAE 工况工具箱</small></div></div>
-        <nav className="wbNav">
-          <button type="button" className={"wbNavItem wbHome" + (activeId === "home" ? " active" : "")} onClick={() => selectModule("home")}>
-            <span className="wbNavTitle">⌂ 模块库 · 全部模块</span>
+    <div className={"wbShell" + (showSidebar ? "" : " noSidebar")}>
+      <TitleBar />
+      {showSidebar && (
+        <aside className="wbSidebar">
+          <div className="wbBrand">
+            <span className="wbBrandMark">LC</span>
+            <div><b>LoadCreator 2.0</b><small>CAE 工况工具箱</small></div>
+          </div>
+
+          <button type="button" className="wbBackHome" onClick={() => selectModule("home")}>
+            <span aria-hidden="true">←</span> 模块库
           </button>
-          <span className="wbNavHint">选择工况模板 · 更多模块将持续加入</span>
-          {groups.map((group) => {
-            const list = modules.filter((m) => m.category === group.id);
-            if (list.length === 0) return null;
-            return (
-              <div key={group.id} className="wbNavGroup">
-                <span className="wbNavGroupLabel">{group.label}</span>
-                {list.map((m) => (
-                  <button key={m.id} type="button" className={"wbNavItem" + (m.id === activeId ? " active" : "")} onClick={() => selectModule(m.id)}>
-                    <span className="wbNavTitle">{m.title}</span>
-                    <span className={"wbBadge " + m.status}>{STATUS_LABELS[m.status] ?? m.status}</span>
-                  </button>
-                ))}
-              </div>
-            );
-          })}
-        </nav>
-        <div className="wbSidebarFoot">
-          <span>求解器 · {active?.solver === "radioss" ? "Radioss 2022" : "OptiStruct " + (active?.minSupportedVersion ?? "")}</span>
-          <small>{active?.solver === "radioss" ? "单文件 .rad · 离线运行" : "增量 FEM · 离线运行"}</small>
-        </div>
-      </aside>
+
+          <div className="wbModuleHead">
+            <span className="wbModuleIcon">{moduleMeta(activeId).icon}</span>
+            <div className="wbModuleMeta">
+              <b>{active?.title}</b>
+              <span className={"wbBadge " + (active?.status ?? "")}>{STATUS_LABELS[active?.status ?? ""] ?? active?.status}</span>
+            </div>
+          </div>
+          <p className="wbModuleDesc">{moduleMeta(activeId).description}</p>
+
+          <nav className="wbNav">
+            <span className="wbNavGroupLabel">本模块能力</span>
+            {active?.capabilityFlags.map((flag) => (
+              <span key={flag} className="wbNavFlag">{flag}</span>
+            ))}
+          </nav>
+
+          <div className="wbSidebarFoot">
+            <span>求解器 · {active?.solver === "radioss" ? "Radioss 2022" : "OptiStruct " + (active?.minSupportedVersion ?? "")}</span>
+            <small>{active?.solver === "radioss" ? "单文件 .rad · 离线运行" : "增量 FEM · 离线运行"}</small>
+          </div>
+        </aside>
+      )}
 
       <main className="wbMain">
         {activeId === "home" ? (
@@ -553,7 +565,6 @@ export default function Workbench() {
         ) : (
           <>
         <header className="wbHeader">
-          <button type="button" className="wbBack" onClick={() => selectModule("home")}>← 模块库</button>
           <div>
             <p className="wbEyebrow">CASE WORKBENCH</p>
             <h1>{active?.title}</h1>

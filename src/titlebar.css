@@ -1,0 +1,75 @@
+/* ==========================================================================
+   Custom window frame (decorations: false)
+   The native title bar is gone; this row is the window chrome. It carries no
+   brand of its own — the sidebar below already has the mark and the name — so
+   the left 268px simply continues the sidebar's colour and the whole dark block
+   reads as one surface from the window corner down.
+   ========================================================================== */
+.appTitleBar {
+  position: relative;
+  z-index: 30;
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: stretch;
+  height: 36px;
+  background: linear-gradient(90deg, #16241f 0 268px, #eef1ed 268px 100%);
+  /* No bottom border: a 1px hairline across the dark column read as a stray
+     line, and on the light column the tint change already separates the bars. */
+  border-bottom: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.appTitleBarSpacer { flex: 1 1 auto; min-width: 0; }
+.appWindowControls {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+}
+.appWindowControls button {
+  width: 46px;
+  display: grid;
+  place-items: center;
+  color: #4d655a;
+  background: transparent;
+  border: 0;
+  transition: background 0.13s ease, color 0.13s ease;
+}
+.appWindowControls button:hover { background: rgba(22, 36, 31, 0.07); color: #16211b; }
+.appWindowControls button:active { background: rgba(22, 36, 31, 0.12); }
+.appWindowControls button.danger:hover { background: #c0332b; color: #ffffff; }
+.appWindowControls button.danger:active { background: #a5281f; color: #ffffff; }
+.appWindowControls button:focus-visible { outline: 2px solid #4aa06a; outline-offset: -3px; }
+
+/* Shell grid: title bar on top, sidebar + main sharing the row below.
+   The height chain is pinned to the root so only .wbMain scrolls — otherwise the
+   document itself overflows and drags the sidebar along with it. */
+@media (min-width: 1101px) {
+  html, body, #root { height: 100%; overflow: hidden; }
+  .wbShell {
+    height: 100%;
+    min-height: 0;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .wbShell > .wbSidebar { grid-row: 2; min-height: 0; }
+  .wbShell > .wbMain { grid-row: 2; min-height: 0; }
+}
+
+@media (max-width: 1100px) {
+  .wbShell > .wbSidebar { grid-row: 2; }
+  .wbShell > .wbMain { grid-row: 3; }
+}
+@media (max-width: 900px) {
+  .appTitleBar { background: #16241f; }
+}
+/* Views without a sidebar (the gallery home, and the self-contained tabular
+   module) collapse the shell to one column. Without this the <main> lands in the
+   268px sidebar track and gets squeezed. The title bar also drops its dark block
+   so no orphaned square is left above the content. */
+.wbShell.noSidebar .appTitleBar { background: #eef1ed; }
+/* Home has no dark block to anchor against, so give the chrome the same tint as
+   the page canvas and let the window buttons sit on it without a seam. */
+.wbShell.noSidebar .appWindowControls button { color: #4d655a; }
+@media (min-width: 1101px) {
+  .wbShell.noSidebar { grid-template-columns: minmax(0, 1fr); }
+  .wbShell.noSidebar > .wbMain { grid-column: 1 / -1; }
+}

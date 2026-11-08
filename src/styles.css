@@ -147,7 +147,10 @@ input, textarea { outline: none; }
 /* ==========================================================================
    Main & header
    ========================================================================== */
-main {
+/* Legacy 1.x layout only (the .shell wrapper). Scoped so it cannot leak onto
+   the 2.0 workbench's <main class="wbMain">, where align-self: start would stop
+   the grid item from filling its row and break internal scrolling. */
+.shell > main {
   grid-column: 2;
   width: 100%;
   max-width: 1580px;
@@ -404,19 +407,26 @@ h1 { font-size: 26px; font-weight: 750; letter-spacing: -0.04em; }
 .wbBrand small { color: #8fb3a4; font-size: 11px; letter-spacing: .04em; }
 .wbProject label { display: block; font-size: 11px; color: #8fb3a4; margin-bottom: 4px; }
 .wbProject input { width: 100%; box-sizing: border-box; background: #1f312b; border: 1px solid #2e463d; color: #eaf4ee; border-radius: 8px; padding: 8px 10px; font-size: 13px; }
-.wbNav { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 14px; }
-.wbNavGroup { display: flex; flex-direction: column; gap: 4px; }
-.wbNavGroupLabel { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #6f9484; padding: 4px 6px; }
-.wbNavItem { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: transparent; border: 1px solid transparent; color: #dbe6df; text-align: left; padding: 9px 10px; border-radius: 9px; cursor: pointer; font-size: 13px; }
-.wbNavItem:hover { background: #1f312b; }
-.wbNavItem.active { background: #234f3e; border-color: #35745a; color: #f2fff8; }
-.wbNavTitle { font-weight: 500; }
+/* Per-module sidebar: it describes the module you are in, it does not list the
+   catalogue (the gallery owns that). */
+.wbBackHome { display: inline-flex; align-items: center; gap: 7px; align-self: flex-start; background: #1f312b; border: 1px solid #2e463d; color: #cfe9dc; font-size: 12px; padding: 7px 11px; border-radius: 8px; cursor: pointer; transition: background .14s ease, border-color .14s ease; }
+.wbBackHome:hover { background: #264036; border-color: #3a5a4c; color: #f2fff8; }
+.wbModuleHead { display: flex; align-items: center; gap: 11px; }
+.wbModuleIcon { width: 40px; height: 40px; flex: 0 0 auto; border-radius: 11px; display: grid; place-items: center; font-size: 19px; color: #9ff0bd; background: rgba(95, 213, 138, .10); border: 1px solid rgba(112, 220, 146, .28); }
+.wbModuleMeta { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.wbModuleMeta b { font-size: 14px; color: #f2fff8; line-height: 1.25; }
+.wbModuleMeta .wbBadge { align-self: flex-start; }
+.wbModuleDesc { margin: 0; font-size: 11.5px; line-height: 1.65; color: #8fb3a4; }
+.wbNav { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid #26382f; padding-top: 12px; }
+.wbNavGroupLabel { font-size: 10.5px; text-transform: uppercase; letter-spacing: .09em; color: #6f9484; padding: 0 2px 4px; }
+.wbNavFlag { display: inline-flex; align-self: flex-start; font: 11px var(--mono, monospace); color: #a9cbbd; background: #1f312b; border: 1px solid #2e463d; border-radius: 6px; padding: 4px 8px; }
 .wbBadge { font-size: 10px; padding: 2px 6px; border-radius: 999px; background: #2e463d; color: #a9cbbd; }
 .wbBadge.stable { background: #2f6b52; color: #eafff4; }
 .wbBadge.beta { background: #5a4a1f; color: #f4e0a8; }
 .wbBadge.experimental { background: #5a2a2a; color: #f4c8c8; }
 .wbSidebarFoot { font-size: 11px; color: #7fa392; display: flex; flex-direction: column; gap: 2px; border-top: 1px solid #26382f; padding-top: 10px; }
 .wbMain { padding: 22px 26px 40px; overflow: auto; }
+.wbShell.noSidebar > .wbMain { padding: 26px 34px 48px; }
 .wbHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .wbEyebrow { margin: 0; font-size: 11px; letter-spacing: .1em; color: #6b8d7d; }
 .wbHeader h1 { margin: 2px 0 0; font-size: 22px; }
@@ -492,21 +502,109 @@ h1 { font-size: 26px; font-weight: 750; letter-spacing: -0.04em; }
 .tabMain { width: 100%; display: flex; flex-direction: column; gap: 20px; }
 .tabMain .mainHeader { margin-bottom: 4px; }
 
-.wbNavHint { display: block; font-size: 10.5px; color: #6f9484; padding: 2px 6px 8px; }
-
-
 /* ===== Module gallery (toolbox home) ===== */
-.gallery { display: flex; flex-direction: column; gap: 22px; }
+/* Full-width home: cap the column so cards do not stretch into an empty band on
+   wide screens, and centre the block once the window grows past the cap. */
+.gallery { display: flex; flex-direction: column; gap: 22px; width: 100%; max-width: 1180px; margin: 0 auto; }
 .galleryHero { background: linear-gradient(160deg, #1c3529, #142a20); color: #eaf4ee; border-radius: 18px; padding: 26px 28px; }
 .galleryHero .wbEyebrow { color: #7fd6a0; }
 .galleryHero h1 { color: #f2fff8; font-size: 26px; margin: 4px 0 8px; letter-spacing: -0.02em; }
 .gallerySub { color: #a9cbbd; font-size: 13px; line-height: 1.7; max-width: 760px; }
 .gallerySub strong { color: #c8edd6; }
+/* hero stats */
+.galleryStats { display: flex; flex-wrap: wrap; gap: 22px; margin-top: 16px; }
+.galleryStats span { font-size: 11.5px; color: #8fc0a6; letter-spacing: .01em; }
+.galleryStats b { font-size: 15px; color: #d7f7e3; font-weight: 700; margin-right: 3px; }
+
+/* toolbar: sticky so search stays reachable while scrolling the catalogue */
+.galleryToolbar {
+  position: sticky;
+  top: -26px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 0 10px;
+  /* Solid, not a gradient: under the sticky bar the cards scroll beneath it and a
+     translucent fade let their text bleed through. */
+  background: #eef1ed;
+}
+.gallerySearch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 300px;
+  min-width: 220px;
+  max-width: 460px;
+  height: 38px;
+  padding: 0 10px 0 11px;
+  background: #fff;
+  border: 1px solid #d6e0d9;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(20, 34, 26, .05);
+  transition: border-color .14s ease, box-shadow .14s ease;
+}
+.gallerySearch:focus-within { border-color: #7dbd97; box-shadow: 0 0 0 3px #e2f2e8; }
+.gallerySearchIcon { color: #7c8f86; flex: 0 0 auto; }
+.gallerySearchInput { flex: 1 1 auto; min-width: 0; border: 0; outline: none; background: transparent; font: inherit; font-size: 13px; color: #18211d; }
+.gallerySearchInput::placeholder { color: #9aac9f; }
+.gallerySearchInput::-webkit-search-cancel-button { display: none; }
+.gallerySearchKbd {
+  flex: 0 0 auto; font: 10.5px var(--mono, monospace); color: #8a978f;
+  background: #f0f5f1; border: 1px solid #dce7df; border-radius: 5px; padding: 2px 6px;
+  letter-spacing: .02em; white-space: nowrap;
+}
+.gallerySearchClear {
+  flex: 0 0 auto; width: 20px; height: 20px; display: grid; place-items: center;
+  border-radius: 50%; color: #6c7a71; font-size: 16px; line-height: 1;
+  background: #eef3ef; transition: background .12s ease, color .12s ease;
+}
+.gallerySearchClear:hover { background: #dde7e0; color: #16211b; }
+
+/* status filter chips */
+.galleryFilters { display: flex; gap: 6px; flex-wrap: wrap; }
+.galleryFilter {
+  font-size: 12px; color: #4d655a; background: #fff; border: 1px solid #d6e0d9;
+  border-radius: 999px; padding: 6px 13px; cursor: pointer;
+  transition: background .13s ease, border-color .13s ease, color .13s ease;
+}
+.galleryFilter:hover { border-color: #b9d8c6; color: #1f7a44; }
+.galleryFilter.active { background: #234f3e; border-color: #234f3e; color: #eafff4; }
+
+/* recent strip */
+.galleryRecent { display: flex; flex-direction: column; gap: 9px; }
+.galleryRecentHead { display: flex; align-items: center; gap: 8px; }
+.galleryRecentHead h2 { font-size: 13px; margin: 0; color: #33584a; letter-spacing: .01em; }
+.galleryRecentClear { font-size: 11px; color: #8a978f; background: none; border: 0; cursor: pointer; padding: 2px 4px; border-radius: 5px; }
+.galleryRecentClear:hover { color: #b2453b; background: #fbecea; }
+.galleryRecentList { display: flex; flex-wrap: wrap; gap: 8px; }
+.galleryRecentItem {
+  display: inline-flex; align-items: center; gap: 9px; max-width: 260px;
+  background: #fff; border: 1px solid #dde6df; border-radius: 10px;
+  padding: 8px 12px 8px 9px; cursor: pointer; text-align: left;
+  transition: border-color .14s ease, box-shadow .14s ease, transform .14s ease;
+}
+.galleryRecentItem:hover { border-color: #b9d8c6; box-shadow: 0 10px 24px -18px rgba(20, 60, 40, .6); transform: translateY(-1px); }
+.galleryRecentIcon { width: 24px; height: 24px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 7px; font-size: 13px; color: #1f7a44; background: #e9f7ee; border: 1px solid #cfe8d8; }
+.galleryRecentTitle { font-size: 12.5px; color: #14331f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.galleryRecentGo { font-size: 12px; color: #8fc0a6; }
+
+/* result count + empty state */
+.galleryCount { margin: -6px 0 0; font-size: 12px; color: #6c7a71; }
+.galleryCount b { color: #17572f; }
+.galleryCountHint { color: #8a978f; margin-left: 6px; }
+.galleryEmpty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 54px 20px; color: #7c8f86; background: #fff; border: 1px dashed #d5e0d9; border-radius: 14px; }
+.galleryEmpty p { margin: 0; font-size: 13.5px; }
+.galleryEmpty button { font-size: 12.5px; color: #17572f; background: #e7f5ec; border: 1px solid #c7e5d4; border-radius: 8px; padding: 7px 14px; cursor: pointer; }
+.galleryEmpty button:hover { background: #d8eee1; }
+
 .galleryGroup { display: flex; flex-direction: column; gap: 12px; }
 .galleryGroupHead { display: flex; align-items: baseline; gap: 12px; }
 .galleryGroupHead h2 { font-size: 16px; margin: 0; }
 .galleryGroupHead span { font-size: 12px; color: #7c8f86; }
-.galleryGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+.galleryGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr)); gap: 14px; }
 .moduleCard { position: relative; display: flex; flex-direction: column; gap: 8px; text-align: left; background: #fff; border: 1px solid #dde6df; border-radius: 14px; padding: 16px; cursor: pointer; transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease; }
 .moduleCard:hover { transform: translateY(-3px); box-shadow: 0 16px 34px -22px rgba(20, 60, 40, .55); border-color: #b9d8c6; }
 .moduleCardTop { display: flex; align-items: center; justify-content: space-between; }
@@ -515,9 +613,4 @@ h1 { font-size: 26px; font-weight: 750; letter-spacing: -0.04em; }
 .moduleCard p { margin: 0; font-size: 12px; line-height: 1.6; color: #5d7268; flex: 1; }
 .moduleCardTags { display: flex; flex-wrap: wrap; gap: 5px; }
 .moduleCardOpen { font-size: 12px; color: #2f6b52; font-weight: 600; margin-top: 2px; }
-.wbHome { color: #cfe9dc; }
-.wbHome.active { background: #234f3e; border-color: #35745a; }
-
-.wbBack { background: none; border: none; color: #4d655a; font-size: 12.5px; cursor: pointer; padding: 4px 8px 4px 0; }
-.wbBack:hover { color: #1f7a44; }
 .wbHeader { align-items: center; }
