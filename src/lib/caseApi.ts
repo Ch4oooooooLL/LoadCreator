@@ -95,4 +95,32 @@ export async function migrateLegacyWorkspace(legacy: unknown): Promise<unknown> 
   return invoke<unknown>("migrate_legacy_workspace_cmd", { legacy });
 }
 
+/* ---- PSD spectrum import / standard template ---- */
+
+export interface PsdImportPoint {
+  frequencyHz: number;
+  psd: number;
+}
+
+export interface PsdImportResult {
+  points: PsdImportPoint[];
+  warnings: string[];
+  ignoredLines: number;
+  /** "csv" | "txt" | "xlsx" | "ods" */
+  sourceKind: string;
+  /** "comma" | "tab" | "semicolon" | "whitespace" (text files only) */
+  delimiter?: string | null;
+  header?: string | null;
+  sheetName?: string | null;
+  interpolationGuess?: string | null;
+}
+
+export async function readPsdSpectrumFile(path: string): Promise<PsdImportResult> {
+  return invoke<PsdImportResult>("read_psd_spectrum_file", { path });
+}
+
+export async function writePsdTemplate(path: string, format: "csv" | "xlsx"): Promise<string> {
+  return invoke<string>("write_psd_template", { path, format });
+}
+
 export { isDesktop };

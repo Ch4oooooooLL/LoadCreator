@@ -10,6 +10,7 @@ pub mod deck_ir;
 pub mod diagnostics;
 pub mod ids;
 pub mod psd;
+pub mod psd_import;
 pub mod radioss_deck;
 pub mod radioss_spec;
 pub mod references;

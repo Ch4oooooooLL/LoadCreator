@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import NumericInput from "@/components/NumericInput";
 import InfoTip from "@/components/InfoTip";
 import ModulePreview from "@/modules/previews/ModulePreview";
@@ -13,9 +13,12 @@ import {
   isDesktop,
   listCaseModules,
   previewCase,
+  readPsdSpectrumFile,
+  writePsdTemplate,
   type Diagnostic,
   type ModuleDescriptor,
   type PreviewResult,
+  type PsdImportResult,
 } from "@/lib/caseApi";
 
 type Draft = Record<string, any>;
@@ -133,6 +136,15 @@ const INITIAL_DRAFTS: Record<string, Draft> = {
     dampingRatio: "0.02", outputProfile: "PSD_AND_RMS", stress: true, displacement: true, acceleration: true, confirmSpc: false,
   },
 };
+
+/** 标准示例谱（与后端模板一致），用于“载入示例”。 */
+const PSD_SAMPLE_POINTS: Array<{ frequencyHz: string; psd: string }> = [
+  { frequencyHz: "10", psd: "0.003" },
+  { frequencyHz: "20", psd: "0.01" },
+  { frequencyHz: "50", psd: "0.02" },
+  { frequencyHz: "100", psd: "0.006" },
+  { frequencyHz: "200", psd: "0.003" },
+];
 
 function buildRadiossParameters(d: Draft): Record<string, unknown> {
   const timeStep =
@@ -450,6 +462,8 @@ export default function Workbench() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
+  const [psdImport, setPsdImport] = useState<PsdImportResult | null>(null);
+  const [psdBusy, setPsdBusy] = useState(false);
 
   useEffect(() => {
     if (!isDesktop()) return;
@@ -468,6 +482,7 @@ export default function Workbench() {
     setPreview(null);
     setError("");
     setStatus("");
+    setPsdImport(null);
   };
 
   const caseName = useMemo(() => {
@@ -510,6 +525,63 @@ export default function Workbench() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function importPsdSpectrum() {
+    if (!isDesktop()) { setError("谱文件导入由 Rust 桌面端完成，请使用 npm run tauri:dev 或已安装程序运行。"); return; }
+    try {
+      const picked = await openDialog({
+        multiple: false,
+        title: "选择 PSD 谱文件（CSV / TXT / XLSX）",
+        filters: [{ name: "谱表文件", extensions: ["csv", "txt", "xlsx", "xls", "tsv"] }],
+      });
+      if (!picked || Array.isArray(picked)) return;
+      setPsdBusy(true); setError(""); setStatus("");
+      const result = await readPsdSpectrumFile(picked);
+      if (result.points.length === 0) { setError("文件中未识别到有效谱点，请检查格式或表头。"); return; }
+      patch("points", result.points.map((p) => ({ frequencyHz: String(p.frequencyHz), psd: String(p.psd) })));
+      if (result.interpolationGuess) patch("interpolation", result.interpolationGuess);
+      setPsdImport(result);
+      setStatus("已从 " + picked.split(/[\\/]/).pop() + " 导入 " + result.points.length + " 个谱点，请核对后预览。");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setPsdBusy(false);
+    }
+  }
+
+  async function downloadPsdTemplate(format: "csv" | "xlsx") {
+    const fileName = format === "xlsx" ? "PSD谱_标准模板.xlsx" : "PSD谱_标准模板.csv";
+    try {
+      if (isDesktop()) {
+        const picked = await saveDialog({
+          title: "保存 PSD 谱标准模板",
+          defaultPath: fileName,
+          filters: [{ name: format === "xlsx" ? "Excel 工作簿" : "CSV 文件", extensions: [format] }],
+        });
+        if (!picked) return;
+        const savedPath = await writePsdTemplate(picked, format);
+        setStatus("模板已保存：" + savedPath);
+      } else {
+        const csv = "\ufeff# PSD 随机振动输入谱 · 标准模板\n# 频率必须为正且严格递增；对数插值(LOG-LOG)下 PSD 必须大于 0。\n频率Hz,PSD(g^2/Hz)\n10,0.003\n20,0.01\n50,0.02\n100,0.006\n200,0.003\n";
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = fileName;
+        anchor.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  function loadPsdSample() {
+    patch("points", PSD_SAMPLE_POINTS.map((p) => ({ ...p })));
+    patch("interpolation", "LOG-LOG");
+    setPsdImport(null);
+    setStatus("已载入标准示例谱表（LOG-LOG）。");
   }
 
   const isRadioss = activeId === "radioss-rops" || activeId === "radioss-fops";
@@ -684,6 +756,41 @@ export default function Workbench() {
                   )}
                   <Field label="PSD 单位" help="输入谱的单位，如 g^2/Hz 或 N^2/Hz；需与激励类型匹配。"><RawInput value={draft.inputPsdUnit} onChange={(v) => patch("inputPsdUnit", v)} mono /></Field>
                 </div>
+                <div className="wbSubHead">PSD 谱表导入与模板</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                  <button type="button" className="wbMini" disabled={psdBusy} onClick={() => void importPsdSpectrum()}>
+                    {psdBusy ? "读取中…" : "从文件导入（CSV/TXT/XLSX）"}
+                  </button>
+                  <button type="button" className="wbMini" onClick={() => void downloadPsdTemplate("xlsx")}>下载 Excel 模板</button>
+                  <button type="button" className="wbMini" onClick={() => void downloadPsdTemplate("csv")}>下载 CSV 模板</button>
+                  <button type="button" className="wbMini" onClick={loadPsdSample}>载入示例</button>
+                </div>
+                {psdImport && (
+                  <div className="wbAlert info">
+                    <div>
+                      已导入 <b>{psdImport.points.length}</b> 个谱点
+                      {" · 来源 " + psdImport.sourceKind.toUpperCase()}
+                      {psdImport.sheetName ? " · 工作表「" + psdImport.sheetName + "」" : ""}
+                      {psdImport.header ? " · 表头「" + psdImport.header + "」" : ""}
+                      {psdImport.ignoredLines ? " · 忽略 " + psdImport.ignoredLines + " 行" : ""}
+                    </div>
+                    {psdImport.warnings.length > 0 && (
+                      <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                        {psdImport.warnings.map((w, i) => <li key={i}>{w}</li>)}
+                      </ul>
+                    )}
+                  </div>
+                )}
+                <details style={{ marginBottom: 8 }}>
+                  <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--wb-muted, #666)" }}>谱表识别规则（点击展开）</summary>
+                  <ul style={{ margin: "6px 0 0", paddingLeft: 18, lineHeight: 1.6, fontSize: 12 }}>
+                    <li>支持 CSV / TXT（逗号、制表符、分号或空白分隔）与 XLSX / XLS / ODS 工作簿。</li>
+                    <li>优先识别表头：频率列（频率Hz / Freq / F / X）与 PSD 列（PSD / 功率谱密度 / 谱值 / g^2/Hz），中英文均可。</li>
+                    <li>无表头时按每行前两列数值识别；若首列为 1,2,3… 递增序号会自动跳过。</li>
+                    <li>单元格中的单位会被忽略，例如“10 Hz”“0.003 g^2/Hz”会读取为 10 与 0.003。</li>
+                    <li>以 # 或 // 开头的说明行、空行自动忽略；识别结果仍需人工核对。</li>
+                  </ul>
+                </details>
                 <div className="wbSubHead">PSD 谱表（Hz / PSD）· 插值 {String(draft.interpolation)}</div>
                 <div className="wbRow3">
                   <Field label="插值" help="谱点之间的插值方式；随机振动通常 LOG-LOG。">

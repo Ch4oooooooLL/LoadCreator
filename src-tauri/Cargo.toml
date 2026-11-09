@@ -18,3 +18,8 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+# PSD spectrum import: read CSV/TXT text and XLSX/ODS workbooks.
+calamine = "0.38"
+encoding_rs = "0.8"
+# Generate the standard PSD spectrum template as a real .xlsx workbook.
+rust_xlsxwriter = "0.102"

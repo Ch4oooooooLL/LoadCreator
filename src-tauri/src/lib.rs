@@ -20,6 +20,10 @@ pub fn run() {
             commands::case::validate_case,
             commands::case::preview_case,
             commands::case::build_case,
+            // PSD spectrum file import / standard template.
+            commands::psd::read_psd_spectrum_file,
+            commands::psd::psd_template_csv,
+            commands::psd::write_psd_template,
             commands::project::save_project,
             commands::project::open_project,
             commands::project::migrate_legacy_workspace_cmd,
