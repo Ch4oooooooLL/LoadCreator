@@ -308,7 +308,51 @@ pub fn default_out_of_range() -> String {
 pub struct FrequencyRange {
     pub min_hz: f64,
     pub max_hz: f64,
+    /// FREQ1 increment (only used when kind == FREQ1).
+    #[serde(default)]
     pub step_hz: f64,
+    /// "FREQ1" (default, uniform step) | "FREQ2" (logarithmic) | "FREQ" (explicit list)
+    #[serde(default = "default_freq_kind")]
+    pub kind: String,
+    /// FREQ2 interval count (NF). Required when kind == FREQ2.
+    #[serde(default)]
+    pub nf: Option<u64>,
+    /// Explicit frequency list (Hz). Used when kind == FREQ.
+    #[serde(default)]
+    pub explicit_hz: Vec<f64>,
+}
+pub fn default_freq_kind() -> String {
+    "FREQ1".into()
+}
+
+/// AMSES (EIGRA) advanced extraction settings (SPEC A5.1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EigraOptions {
+    /// Lowest frequency of interest (V1); default 0 when omitted.
+    #[serde(default)]
+    pub v1_hz: Option<f64>,
+    /// Highest modal frequency (V2, mandatory for EIGRA).
+    pub v2_hz: f64,
+    /// Desired number of roots (ND); empty = full range.
+    #[serde(default)]
+    pub nd: Option<u64>,
+    /// 0/1 AMSES diagnostic printing.
+    #[serde(default)]
+    pub msglvl: Option<u32>,
+    /// Internal substructure frequency expansion factor (AMPFFACT).
+    #[serde(default)]
+    pub ampffact: Option<f64>,
+    /// Normalisation: MASS (default) / MAX / ALL.
+    #[serde(default)]
+    pub norm: Option<String>,
+}
+
+pub fn default_axis_mode() -> String {
+    "single".into()
+}
+pub fn default_excitation_form() -> String {
+    "RLOAD2".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -366,6 +410,15 @@ pub struct RandomPsdSpec {
     pub spectrum: PsdSpectrum,
     pub frequency: FrequencyRange,
     pub modal: ModalRange,
+    /// "single" (default) | "sequential-tri" (three independent MFREQ+RANDOM pairs).
+    #[serde(default = "default_axis_mode")]
+    pub axis_mode: String,
+    /// "RLOAD2" (default, amplitude/phase) | "RLOAD1" (complex real/imag).
+    #[serde(default = "default_excitation_form")]
+    pub excitation_form: String,
+    /// Extra AMSES settings; required when modal.solver selects EIGRA/AMSES.
+    #[serde(default)]
+    pub eigra: Option<EigraOptions>,
     #[serde(default)]
     pub damping: Damping,
     #[serde(default)]

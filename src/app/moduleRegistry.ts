@@ -17,7 +17,7 @@ export const FALLBACK_MODULES: ModuleDescriptor[] = [
   { id: "gravity", title: "重力", category: "static", solver: "optistruct", minSupportedVersion: "2022", status: "beta", helpKey: "gravity", capabilityFlags: ["GRAV", "单位换算"] },
   { id: "normal-modes", title: "模态", category: "modal", solver: "optistruct", minSupportedVersion: "2022", status: "beta", helpKey: "normal-modes", capabilityFlags: ["EIGRL", "模态子工况"] },
   { id: "frequency-response", title: "频率响应", category: "dynamic", solver: "optistruct", minSupportedVersion: "2022", status: "experimental", helpKey: "frequency-response", capabilityFlags: ["FREQ1", "TABDMP1", "MFREQ"] },
-  { id: "random-psd", title: "PSD 随机振动", category: "dynamic", solver: "optistruct", minSupportedVersion: "2022", status: "beta", helpKey: "random-psd", capabilityFlags: ["TABRND1", "RANDPS", "Grms", "单轴"] },
+  { id: "random-psd", title: "PSD 随机振动", category: "dynamic", solver: "optistruct", minSupportedVersion: "2022", status: "beta", helpKey: "random-psd", capabilityFlags: ["EIGRL/EIGRA", "RLOAD1/RLOAD2", "FREQ1/FREQ2", "顺序三轴"] },
 ];
 
 export const MODULE_GROUPS: Array<{ id: string; label: string; hint: string }> = [
@@ -59,7 +59,7 @@ export const MODULE_META: Record<string, ModuleMeta> = {
   gravity: { icon: "▼", description: "按模型单位换算的重力加速度工况（GRAV）。" },
   "normal-modes": { icon: "∿", description: "EIGRL 模态提取与模态子工况。" },
   "frequency-response": { icon: "≈", description: "频响分析：FREQ1 / TABDMP1 / MFREQ 子工况。" },
-  "random-psd": { icon: "⋮⋮", description: "单轴 PSD 随机振动：TABRND1 → RANDPS → MFREQ + RANDOM，含 Grms 校验。" },
+  "random-psd": { icon: "⋮⋮", description: "PSD 随机振动：TABRND1 → RANDPS → MFREQ + RANDOM；支持 EIGRA/EIGRL、RLOAD1/RLOAD2、FREQ1/FREQ2 与顺序三轴（独立自谱），含 Grms 校验。" },
 };
 
 export function moduleMeta(id: string): ModuleMeta {

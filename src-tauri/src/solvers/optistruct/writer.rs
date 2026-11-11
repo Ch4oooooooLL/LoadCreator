@@ -7,7 +7,7 @@
 //!   * strict float formatting (reject NaN/Inf, normalise -0);
 //!   * ASCII entity names / labels; Chinese stays in the UI + companion JSON.
 
-use crate::core::cards::{BulkCard, Rload2Tb};
+use crate::core::cards::{BulkCard, RealOrRef, Rload2Tb, TableOrConst};
 use crate::core::deck_ir::{DeckFragment, Subcase};
 use crate::core::diagnostics::Diagnostic;
 use crate::solvers::optistruct::capabilities_2022::ensure_supported;
@@ -333,6 +333,98 @@ fn write_card(out: &mut String, card: &BulkCard) -> Result<(), Diagnostic> {
             push_real_token(&mut tokens, *y)?;
             push_int_token(&mut tokens, *tid);
             out.push_str(&format!("RANDPS,{}\n", tokens.join(",")));
+        }
+        BulkCard::Eigra {
+            sid,
+            v1,
+            v2,
+            nd,
+            msglvl,
+            ampffact,
+            norm,
+        } => {
+            // EIGRA, SID, V1, V2, ND, MSGLVL, AMPFFACT, <blank>, NORM (SPEC A5.1)
+            push_int_token(&mut tokens, *sid);
+            tokens.push(match v1 {
+                Some(v) => fmt_real(*v)?,
+                None => String::new(),
+            });
+            push_real_token(&mut tokens, *v2)?;
+            tokens.push(nd.map(|v| v.to_string()).unwrap_or_default());
+            tokens.push(msglvl.map(|v| v.to_string()).unwrap_or_default());
+            tokens.push(match ampffact {
+                Some(v) => fmt_real(*v)?,
+                None => String::new(),
+            });
+            tokens.push(String::new()); // reserved blank field
+            tokens.push(norm.clone().unwrap_or_default());
+            out.push_str(&format!("EIGRA,{}\n", tokens.join(",")));
+        }
+        BulkCard::Freq2 { sid, f1, f2, nf } => {
+            push_int_token(&mut tokens, *sid);
+            push_real_token(&mut tokens, *f1)?;
+            push_real_token(&mut tokens, *f2)?;
+            push_int_token(&mut tokens, *nf);
+            out.push_str(&format!("FREQ2,{}\n", tokens.join(",")));
+        }
+        BulkCard::FreqList { sid, freqs } => {
+            let header = vec![sid.to_string()];
+            let mut data = Vec::with_capacity(freqs.len());
+            for f in freqs {
+                data.push(fmt_real(*f)?);
+            }
+            emit_continued(out, "FREQ", &header, &data, 8);
+        }
+        BulkCard::Tabled1 {
+            tid,
+            xaxis,
+            yaxis,
+            flat,
+            pairs,
+        } => {
+            // TABLED1, TID, XAXIS, YAXIS, [FLAT], (x,y)...
+            let mut header = vec![tid.to_string(), xaxis.clone(), yaxis.clone()];
+            if *flat {
+                header.push("FLAT".to_string());
+            }
+            let mut data = Vec::with_capacity(pairs.len() * 2);
+            for (x, y) in pairs {
+                data.push(fmt_real(*x)?);
+                data.push(fmt_real(*y)?);
+            }
+            emit_continued(out, "TABLED1", &header, &data, 8);
+        }
+        BulkCard::Rload1 {
+            sid,
+            exciteid,
+            delay,
+            dphase,
+            tc,
+            td,
+            rtype,
+        } => {
+            push_int_token(&mut tokens, *sid);
+            push_int_token(&mut tokens, *exciteid);
+            tokens.push(match delay {
+                Some(RealOrRef::Real(v)) => fmt_real(*v)?,
+                Some(RealOrRef::Ref(id)) => id.to_string(),
+                None => String::new(),
+            });
+            tokens.push(match dphase {
+                Some(RealOrRef::Real(v)) => fmt_real(*v)?,
+                Some(RealOrRef::Ref(id)) => id.to_string(),
+                None => String::new(),
+            });
+            tokens.push(match tc {
+                TableOrConst::Constant(v) => fmt_real(*v)?,
+                TableOrConst::Table(id) => id.to_string(),
+            });
+            tokens.push(match td {
+                TableOrConst::Constant(v) => fmt_real(*v)?,
+                TableOrConst::Table(id) => id.to_string(),
+            });
+            tokens.push(rtype.clone());
+            out.push_str(&format!("RLOAD1,{}\n", tokens.join(",")));
         }
     }
     Ok(())

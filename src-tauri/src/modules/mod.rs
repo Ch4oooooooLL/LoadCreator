@@ -194,7 +194,7 @@ pub fn module_descriptors() -> Vec<ModuleDescriptor> {
             "dynamic",
             "beta",
             "random-psd",
-            &["tabrnd1", "randps", "grms", "single-axis"],
+            &["eigra", "rload1", "freq2", "sequential-tri", "grms"],
         ),
     ]
 }

@@ -15,8 +15,9 @@ Rust + Tauri 2 + React 实现的离线 CAE 工况创建工作台。目标是把�
 - **重力**：GRAV，单位感知（N-mm-s ≈ 9806.65 mm/s²）。
 - **模态**：EIGRL + 模态子工况。
 - **频率响应**：FREQ1 / TABDMP1 / EIGRL / MFREQ 子工况。
-- **PSD 随机振动**：单输入/自谱/单轴；TABRND1 → RANDPS(J=K,Y=0) → MFREQ + RANDOM 子工况；
-  Grms 解析积分校验；PSD+RMS / RMS-only 输出。
+- **PSD 随机振动**：TABRND1 → RANDPS(J=K,Y=0) → MFREQ + RANDOM 子工况；Grms 解析积分校验；
+  PSD+RMS / RMS-only 输出。支持模态法 EIGRL/**EIGRA(AMSES)**、激励形式 **RLOAD2**(幅相)/**RLOAD1**(实虚)、
+  频点分布 FREQ1/**FREQ2**/**FREQ**，以及**顺序三轴**（3 MFREQ + 3 RANDOM，独立自谱，非同时相关合成）。
 
 ### Radioss（实验性 · UNVERIFIED_HM_IMPORT）
 - **ROPS 受控位移**：生成单个不含网格的 Radioss 2022 单文件 `.rad` 增量（`/GRNOD/NODE`、`/FUNCT`、`/IMPDISP`、`/BCS`、`/RUN`、`/ANIM/DT`、`/TFILE`，可选 `/GRAV`、`/DT/NODA/CST`、`/AMS`+`/DT/AMS`）。工作台内置位移曲线、加载方向与求解时间轴的实时可视化预览。
@@ -71,6 +72,7 @@ package-exe.bat
 - [docs/radioss-rops.md](docs/radioss-rops.md)
 - [docs/architecture.md](docs/architecture.md)
 - [docs/supported-cards.md](docs/supported-cards.md)
+- [docs/keyword-parameter-reference-2022.md](docs/keyword-parameter-reference-2022.md)
 - [docs/increment-import.md](docs/increment-import.md)
 - [docs/verification-matrix.md](docs/verification-matrix.md)
 - [docs/user-guide.md](docs/user-guide.md)

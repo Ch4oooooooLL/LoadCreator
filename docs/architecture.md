@@ -30,7 +30,7 @@ IdAllocator (core/ids.rs) → OptiStruct Writer (solvers/optistruct/writer.rs)
 |---|---|---|
 | `CaseSpec` | core/case_spec.rs | 带 `kind` 判别式的类型化请求 |
 | `DeckFragment` / `Subcase` | core/deck_ir.rs | 结构化 deck 片段（子工况、bulk 卡、外部引用、元数据） |
-| `BulkCard` | core/cards.rs | 强类型卡片（FORCE/MOMENT/GRAV/SPC/SPC1/SPCADD/EIGRL/FREQ1/TABDMP1/RLOAD2/DLOAD/SPCD/DAREA/TABRND1/RANDPS） |
+| `BulkCard` | core/cards.rs | 强类型卡片（FORCE/MOMENT/GRAV/SPC/SPC1/SPCADD/EIGRL/**EIGRA**/FREQ1/**FREQ2**/**FREQ**/TABDMP1/**TABLED1**/**RLOAD1**/RLOAD2/DLOAD/SPCD/DAREA/TABRND1/RANDPS） |
 | `IdAllocator` | core/ids.rs | 确定性 ID 分配 + 外部引用冲突检测 |
 | `GenerationContext` | core/deck_ir.rs | 生成期的分配器、单位、诊断、元数据 |
 | `Diagnostic` | core/diagnostics.rs | ERROR / WARNING / INFO + 代码（LC-*） |

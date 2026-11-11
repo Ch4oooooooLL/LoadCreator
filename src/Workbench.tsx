@@ -133,6 +133,8 @@ const INITIAL_DRAFTS: Record<string, Draft> = {
     interpolation: "LOG-LOG", outOfRange: "ERROR",
     points: [{ frequencyHz: "10", psd: "0.003" }, { frequencyHz: "100", psd: "0.006" }, { frequencyHz: "200", psd: "0.003" }],
     minHz: "10", maxHz: "200", stepHz: "1", modalMinHz: "0", modalMaxHz: "300", modalSolver: "LANCZOS",
+    modalMethod: "LANCZOS", eigraV1: "0", eigraV2: "300", eigraNd: "", eigraMsglvl: "0", eigraAmpffact: "5", eigraNorm: "MASS",
+    excForm: "RLOAD2", freqKind: "FREQ1", freqNf: "10", axisMode: "single",
     dampingRatio: "0.02", outputProfile: "PSD_AND_RMS", stress: true, displacement: true, acceleration: true, confirmSpc: false,
   },
 };
@@ -254,8 +256,18 @@ function buildParameters(id: string, d: Draft): Record<string, unknown> {
           interpolation: d.interpolation, outOfRange: d.outOfRange,
           points: (d.points as Draft[]).map((p) => ({ frequencyHz: num(p.frequencyHz), psd: num(p.psd) })),
         },
-        frequency: { minHz: num(d.minHz), maxHz: num(d.maxHz), stepHz: num(d.stepHz) },
-        modal: { minHz: num(d.modalMinHz), maxHz: num(d.modalMaxHz), solver: d.modalSolver },
+        frequency: {
+          minHz: num(d.minHz), maxHz: num(d.maxHz), stepHz: num(d.stepHz),
+          kind: d.freqKind ?? "FREQ1",
+          nf: d.freqKind === "FREQ2" ? (optInt(d.freqNf) ?? 10) : undefined,
+        },
+        modal: { minHz: num(d.modalMinHz), maxHz: num(d.modalMaxHz), solver: d.modalMethod === "EIGRA" ? "AMSES" : (d.modalSolver ?? "LANCZOS") },
+        axisMode: d.axisMode ?? "single",
+        excitationForm: d.excForm ?? "RLOAD2",
+        eigra: d.modalMethod === "EIGRA" ? {
+          v1Hz: optNum(d.eigraV1), v2Hz: num(d.eigraV2), nd: optInt(d.eigraNd),
+          msglvl: optInt(d.eigraMsglvl), ampffact: optNum(d.eigraAmpffact), norm: d.eigraNorm || "MASS",
+        } : undefined,
         damping: { kind: "modal-critical-ratio", ratio: num(d.dampingRatio) },
         output: { profile: d.outputProfile, h3d: true, stress: Boolean(d.stress), displacement: Boolean(d.displacement), acceleration: Boolean(d.acceleration) },
         confirmExcitedDofInSpc: Boolean(d.confirmSpc),
@@ -756,6 +768,50 @@ export default function Workbench() {
                   )}
                   <Field label="PSD 单位" help="输入谱的单位，如 g^2/Hz 或 N^2/Hz；需与激励类型匹配。"><RawInput value={draft.inputPsdUnit} onChange={(v) => patch("inputPsdUnit", v)} mono /></Field>
                 </div>
+                <div className="wbSubHead">高级随机振动（模态 / 激励形式 / 频点 / 轴模式）</div>
+                <div className="wbRow3">
+                  <Field label="模态法" help="EIGRL(Lanczos) 或 EIGRA(AMSES)。AMSES 必须给出最高模态频率 V2。">
+                    <select className="wbInput" value={draft.modalMethod} onChange={(e) => patch("modalMethod", e.target.value)}>
+                      <option value="LANCZOS">EIGRL (Lanczos)</option>
+                      <option value="EIGRA">EIGRA (AMSES)</option>
+                    </select>
+                  </Field>
+                  <Field label="激励形式" help="RLOAD2 幅值/相位（默认）或 RLOAD1 复数实/虚部（TC/TD）。">
+                    <select className="wbInput" value={draft.excForm} onChange={(e) => patch("excForm", e.target.value)}>
+                      <option value="RLOAD2">RLOAD2 (幅相)</option>
+                      <option value="RLOAD1">RLOAD1 (实虚)</option>
+                    </select>
+                  </Field>
+                  <Field label="频点分布" help="FREQ1 等间隔；FREQ2 对数区间。FREQ3/FREQ4 未实现。">
+                    <select className="wbInput" value={draft.freqKind} onChange={(e) => patch("freqKind", e.target.value)}>
+                      <option value="FREQ1">FREQ1 (等间隔)</option>
+                      <option value="FREQ2">FREQ2 (对数)</option>
+                    </select>
+                  </Field>
+                  <Field label="轴模式" help="single 单轴；sequential-tri 生成 3 MFREQ + 3 RANDOM 的独立自谱（仅基座加速度，非同时相关合成）。">
+                    <select className="wbInput" value={draft.axisMode} onChange={(e) => patch("axisMode", e.target.value)}>
+                      <option value="single">单轴</option>
+                      <option value="sequential-tri">顺序三轴 (独立)</option>
+                    </select>
+                  </Field>
+                  {draft.freqKind === "FREQ2" && (
+                    <Field label="FREQ2 区间数 NF" help="对数区间个数，频点总数 NF+1。"><RawInput value={draft.freqNf} onChange={(v) => patch("freqNf", v)} mono /></Field>
+                  )}
+                </div>
+                {draft.modalMethod === "EIGRA" && (
+                  <div className="wbRow3">
+                    <Field label="EIGRA V2 Hz (必填)" help="最高模态频率上限，应高于求解频段。"><RawInput value={draft.eigraV2} onChange={(v) => patch("eigraV2", v)} mono /></Field>
+                    <Field label="EIGRA V1 Hz"><RawInput value={draft.eigraV1} onChange={(v) => patch("eigraV1", v)} mono /></Field>
+                    <Field label="EIGRA ND (可选)"><RawInput value={draft.eigraNd} onChange={(v) => patch("eigraNd", v)} mono /></Field>
+                    <Field label="AMPFFACT" help="内部子结构模态扩展因子，默认约 5。"><RawInput value={draft.eigraAmpffact} onChange={(v) => patch("eigraAmpffact", v)} mono /></Field>
+                    <Field label="MSGLVL (0/1)"><RawInput value={draft.eigraMsglvl} onChange={(v) => patch("eigraMsglvl", v)} mono /></Field>
+                    <Field label="NORM" help="MASS/MAX/ALL 归一化。">
+                      <select className="wbInput" value={draft.eigraNorm} onChange={(e) => patch("eigraNorm", e.target.value)}>
+                        <option value="MASS">MASS</option><option value="MAX">MAX</option><option value="ALL">ALL</option>
+                      </select>
+                    </Field>
+                  </div>
+                )}
                 <div className="wbSubHead">PSD 谱表导入与模板</div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
                   <button type="button" className="wbMini" disabled={psdBusy} onClick={() => void importPsdSpectrum()}>

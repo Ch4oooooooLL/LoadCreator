@@ -19,13 +19,14 @@
 | gravity | ✅ | pending | pending | beta |
 | normal-modes | ✅ | pending | pending | beta |
 | frequency-response | ✅ | pending | pending | experimental |
-| random-psd | ✅ | pending | pending | beta |
+| random-psd（含 EIGRA/RLOAD1/FREQ2/顺序三轴） | ✅ | pending | pending | beta |
 | radioss-rops（Radioss 2022） | ✅ 文本生成 | NOT_RUN | NOT_RUN | experimental |
 
 ## PSD 数值基准（已自动验证）
 
 * 常数 PSD 0.01 g²/Hz，10–110 Hz → Grms = 1 g（LINEAR 与 LOG-LOG 均通过，容差 1e-9）。
 * 1/f 对数-对数谱 (1,1)→(10,0.1) → 积分 = ln(10)（解析对照通过）。
+* 高级随机卡片：EIGRA 输出、RLOAD1（TC/TD 常量或 TABLED1）、FREQ2/FREQ、TABLED1 与顺序三轴（6 子工况）由 `tests/optistruct_advanced.rs` 覆盖文本级。
 
 ## 待人工验证清单
 

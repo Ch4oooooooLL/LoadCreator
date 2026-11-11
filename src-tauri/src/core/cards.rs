@@ -38,6 +38,22 @@ pub enum Rload2Tb {
     Table(u64),
 }
 
+/// A field that is either a literal real value or an integer card/set reference
+/// (used by RLOAD1 DELAY / DPHASE, SPEC A3). Keeping the two cases distinct
+/// avoids the classic "integer 1 read as 1.0" ambiguity (T-010).
+#[derive(Debug, Clone, PartialEq)]
+pub enum RealOrRef {
+    Real(f64),
+    Ref(u64),
+}
+
+/// RLOAD1 TC/TD coefficient: a constant real or a TABLED1 table id (SPEC A3/A4).
+#[derive(Debug, Clone, PartialEq)]
+pub enum TableOrConst {
+    Constant(f64),
+    Table(u64),
+}
+
 #[derive(Debug, Clone)]
 pub enum BulkCard {
     Force {
@@ -135,6 +151,47 @@ pub enum BulkCard {
         y: f64,
         tid: u64,
     },
+    /// AMSES modal extraction (SPEC A5.1). V2 is mandatory; V1/ND optional.
+    Eigra {
+        sid: u64,
+        v1: Option<f64>,
+        v2: f64,
+        nd: Option<u64>,
+        msglvl: Option<u32>,
+        ampffact: Option<f64>,
+        norm: Option<String>,
+    },
+    /// Logarithmic frequency distribution (SPEC A6).
+    Freq2 {
+        sid: u64,
+        f1: f64,
+        f2: f64,
+        nf: u64,
+    },
+    /// Explicit discrete frequency list (SPEC A6, FREQ).
+    FreqList {
+        sid: u64,
+        freqs: Vec<f64>,
+    },
+    /// Frequency-dependent real/imaginary weighting for RLOAD1 (SPEC A4).
+    Tabled1 {
+        tid: u64,
+        xaxis: String,
+        yaxis: String,
+        flat: bool,
+        pairs: Vec<(f64, f64)>,
+    },
+    /// Complex real/imaginary dynamic load (SPEC A3). TC/TD select real/imag
+    /// frequency coefficients; TYPE selects LOAD/DISP/VELO/ACCE.
+    Rload1 {
+        sid: u64,
+        exciteid: u64,
+        delay: Option<RealOrRef>,
+        dphase: Option<RealOrRef>,
+        tc: TableOrConst,
+        td: TableOrConst,
+        rtype: String,
+    },
 }
 
 impl BulkCard {
@@ -155,6 +212,11 @@ impl BulkCard {
             BulkCard::Darea { .. } => "DAREA",
             BulkCard::Tabrnd1 { .. } => "TABRND1",
             BulkCard::Randps { .. } => "RANDPS",
+            BulkCard::Eigra { .. } => "EIGRA",
+            BulkCard::Freq2 { .. } => "FREQ2",
+            BulkCard::FreqList { .. } => "FREQ",
+            BulkCard::Tabled1 { .. } => "TABLED1",
+            BulkCard::Rload1 { .. } => "RLOAD1",
         }
     }
 }

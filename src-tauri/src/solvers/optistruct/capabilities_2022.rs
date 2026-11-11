@@ -11,8 +11,9 @@ pub const SUPPORTED_SOLVER_VERSION: &str = "2022";
 /// Cards this writer can serialise. Keep in sync with `BulkCard`.
 pub fn supported_cards() -> &'static [&'static str] {
     &[
-        "FORCE", "MOMENT", "GRAV", "SPC", "SPC1", "SPCADD", "EIGRL", "FREQ1", "TABDMP1", "RLOAD2",
-        "DLOAD", "SPCD", "DAREA", "TABRND1", "RANDPS",
+        "FORCE", "MOMENT", "GRAV", "SPC", "SPC1", "SPCADD", "EIGRL", "EIGRA", "FREQ1", "FREQ2",
+        "FREQ", "TABDMP1", "TABLED1", "RLOAD1", "RLOAD2", "DLOAD", "SPCD", "DAREA", "TABRND1",
+        "RANDPS",
     ]
 }
 

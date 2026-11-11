@@ -193,3 +193,55 @@ fn rops_golden() {
         .expect("missing radioss golden fixture");
     assert_eq!(rad, expected, "radioss golden mismatch");
 }
+
+
+#[test]
+fn fops_builds_controlled_displacement_with_impact_check() {
+    let req: CaseRequest = serde_json::from_value(json!({
+        "projectName": "FOPS_Demo",
+        "case": {
+            "kind": "radioss-fops",
+            "parameters": {
+                "base": {
+                    "name": "FOPS_CASE_1",
+                    "runName": "FOPS_CASE",
+                    "solver": "radioss",
+                    "solverVersion": "2022",
+                    "units": {
+                        "input": { "mass": "kg", "length": "mm", "time": "ms" },
+                        "work": { "mass": "kg", "length": "mm", "time": "ms" },
+                        "confirmedAgainstTargetModel": true
+                    },
+                    "references": {
+                        "loadTarget": { "kind": "node", "nodeId": 3001 },
+                        "constraints": [
+                            { "target": { "kind": "nodes", "nodeIds": [4001, 4002] },
+                              "dofs": [true, true, true, true, true, true] }
+                        ]
+                    },
+                    "loading": {
+                        "direction": "Z",
+                        "curve": [
+                            { "time": 0.0, "value": 0.0 },
+                            { "time": 0.01, "value": 30.0 },
+                            { "time": 0.05, "value": 30.0 }
+                        ]
+                    },
+                    "engine": {
+                        "endTime": 0.05,
+                        "animation": { "startTime": 0.0, "interval": 0.005 },
+                        "timeHistoryInterval": 0.0005,
+                        "timeStep": { "mode": "natural" }
+                    },
+                    "idPolicy": { "generatedStart": 800000, "manuallyOccupiedRanges": [] }
+                },
+                "impact": { "dropMassKg": 300.0, "dropHeightMm": 3000.0, "gravityG": 1.0 }
+            }
+        }
+    }))
+    .unwrap();
+    let p = preview_case(req);
+    assert!(p.summary.can_export, "diagnostics: {:?}", p.diagnostics);
+    assert!(p.fem_preview.contains("/IMPDISP"));
+    assert!(p.diagnostics.iter().any(|d| d.code == "LC-FOPS-002"));
+}

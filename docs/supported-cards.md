@@ -20,16 +20,24 @@
 | DAREA | 参考力 | 2022 | 见 SPEC §19 | pending | pending | random_psd |
 | TABRND1 | PSD 谱表 | 2022 | 见 SPEC §19 | pending | pending | random_psd |
 | RANDPS | 随机谱关联 | 2022 | 见 SPEC §19 | pending | pending | random_psd |
+| EIGRA | AMSES 模态提取 | 2022 | SPEC A5.1 | pending | pending | optistruct_advanced |
+| FREQ2 | 对数频点分布 | 2022 | SPEC A6 | pending | pending | optistruct_advanced |
+| FREQ | 显式频点列表 | 2022 | SPEC A6 | pending | pending | optistruct_advanced |
+| TABLED1 | 频率实/虚部权重表 | 2022 | SPEC A4 | pending | pending | optistruct_advanced |
+| RLOAD1 | 复数实/虚动载 | 2022 | SPEC A3 | pending | pending | optistruct_advanced |
 
 ## 未支持（显式拒绝，避免伪装）
 
 * OptiStruct 2019 / HyperMesh 2019/2022 目标版本（当前 `ensure_supported` 拒绝非 2022）。
 * Radioss 后端、瞬态、压力、预载关联、惯性释放：未实现，不提供按钮。
-* 多轴 / 互谱 PSD：仅实现单输入自谱单轴（V1 范围）。
+* 互谱 / 同时相关多轴 PSD：未实现（需 Hermitian 半正定互谱矩阵校验 LC-PSD-113）。**顺序三轴（sequential-tri）已实现**：生成 3 个独立 MFREQ + 3 个独立 RANDOM 子工况，但不是同时相关随机合成。
+* FREQ3 / FREQ4（模态间自适应 / 共振峰密集采样）：未实现，界面不提供。
+* EIGRL 的 MAXSET/SHFSCL 等高级字段：未暴露。
 
 ## 字段级注意
 
 * `RLOAD2` 的 `TB` 使用 `Rload2Tb::Constant / Table`，避免把整数 1 误当比例系数。
+* `RLOAD1` 的 `DELAY/DPHASE` 使用 `RealOrRef`（实数 vs 卡 ID 语义不同），`TC/TD` 使用 `TableOrConst`（常数 vs TABLED1 ID）。
 * `RANDPS` 的 `J/K` 是频响子工况 ID（自谱 J=K，Y=0），不是节点号。
 * `TABRND1` 的 XAXIS/YAXIS 随插值方式生成；越界默认由工具校验拒绝（不是 TABRND1 原生字段）。
 
