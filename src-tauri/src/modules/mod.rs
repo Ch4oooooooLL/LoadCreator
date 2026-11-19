@@ -4,6 +4,7 @@
 pub mod constraint;
 pub mod frequency_response;
 pub mod gravity;
+pub mod multi_case;
 pub mod nodal_static;
 pub mod normal_modes;
 pub mod random_psd;
@@ -130,7 +131,7 @@ pub fn module_descriptors() -> Vec<ModuleDescriptor> {
             "radioss",
             "experimental",
             "radioss-rops",
-            &["/GRNOD/NODE", "/FUNCT", "/IMPDISP", "单文件 .rad"],
+            &["/IMPDISP", "/SKEW/FIX", "/INTER/TYPE7", "单文件 .rad"],
         ),
         dr(
             "radioss-fops",
@@ -138,7 +139,7 @@ pub fn module_descriptors() -> Vec<ModuleDescriptor> {
             "radioss",
             "experimental",
             "radioss-fops",
-            &["落锤位移曲线", "/IMPDISP", "冲击能量换算", "单文件 .rad"],
+            &["落锤位移曲线", "/IMPDISP", "/INTER/TYPE7", "冲击能量换算"],
         ),
         d(
             "tabular-load",

@@ -22,6 +22,8 @@ pub enum CaseSpec {
     RadiossRops(RadiossRopsSpec),
     /// Radioss 2022 single-file FOPS drop-hammer increment (controlled-displacement approximation).
     RadiossFops(RadiossFopsSpec),
+    /// Multi-case OptiStruct 2022 unified FEM assembly.
+    MultiCase(MultiCaseSpec),
 }
 
 impl CaseSpec {
@@ -36,6 +38,7 @@ impl CaseSpec {
             CaseSpec::RandomPsd(_) => "random-psd",
             CaseSpec::RadiossRops(_) => "radioss-rops",
             CaseSpec::RadiossFops(_) => "radioss-fops",
+            CaseSpec::MultiCase(_) => "multi-case",
         }
     }
 }
@@ -157,6 +160,25 @@ pub fn default_constraint_mode() -> String {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GravityCaseRow {
+    pub name: String,
+    /// Gravity acceleration magnitude in model units (e.g. 9806.65 mm/s² for N-mm-s).
+    pub acceleration: f64,
+    /// X directional coefficient (GRAV N1).
+    #[serde(default)]
+    pub nx: f64,
+    /// Y directional coefficient (GRAV N2).
+    #[serde(default)]
+    pub ny: f64,
+    /// Z directional coefficient (GRAV N3).
+    #[serde(default)]
+    pub nz: f64,
+    #[serde(default)]
+    pub cid: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GravitySpec {
     pub name: String,
     #[serde(default = "default_units")]
@@ -165,11 +187,15 @@ pub struct GravitySpec {
     pub solver: String,
     #[serde(default = "default_version")]
     pub solver_version: String,
-    /// Gravity magnitude expressed in multiples of standard gravity.
-    pub magnitude_g: f64,
-    /// Direction vector (normalised; magnitude ignored).
+    /// Multi-case table rows. When non-empty, each row generates a GRAV + SUBCASE.
     #[serde(default)]
-    pub direction: [f64; 3],
+    pub cases: Vec<GravityCaseRow>,
+    /// Legacy single-case field: gravity magnitude expressed in multiples of standard gravity.
+    #[serde(default)]
+    pub magnitude_g: Option<f64>,
+    /// Legacy single-case field: direction vector (normalised; magnitude ignored).
+    #[serde(default)]
+    pub direction: Option<[f64; 3]>,
     #[serde(default)]
     pub cid: u64,
     #[serde(default)]
@@ -442,6 +468,53 @@ impl RandomPsdSpec {
     }
 }
 
+fn default_true() -> bool {
+    true
+}
+
+/// Cross-case entity reference inside a multi-case OptiStruct project.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum EntityLink {
+    None,
+    External {
+        id: u64,
+    },
+    Case {
+        #[serde(rename = "caseId")]
+        case_id: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiCaseItem {
+    pub case_id: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub spc_source: Option<EntityLink>,
+    #[serde(default)]
+    pub load_source: Option<EntityLink>,
+    pub spec: Box<CaseSpec>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiCaseSpec {
+    pub name: String,
+    #[serde(default = "default_units")]
+    pub model_units: String,
+    #[serde(default = "default_optistruct")]
+    pub solver: String,
+    #[serde(default = "default_version")]
+    pub solver_version: String,
+    #[serde(default = "default_policy")]
+    pub id_policy: IdPolicy,
+    #[serde(default)]
+    pub cases: Vec<MultiCaseItem>,
+}
+
 impl CaseSpec {
     /// Human-friendly case name used for output file stems / titles.
     pub fn display_name(&self) -> String {
@@ -461,6 +534,13 @@ impl CaseSpec {
             CaseSpec::RandomPsd(s) => s.name.clone(),
             CaseSpec::RadiossRops(s) => s.name.clone(),
             CaseSpec::RadiossFops(s) => s.base.name.clone(),
+            CaseSpec::MultiCase(s) => {
+                if s.name.is_empty() {
+                    "MultiCase_FEM".into()
+                } else {
+                    s.name.clone()
+                }
+            }
         }
     }
 }

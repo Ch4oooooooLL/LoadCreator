@@ -7,7 +7,7 @@
 
 ## EIGRA —— AMSES 模态提取（新增，Generated）
 
-字段格式：`EIGRA, SID, V1, V2, ND, MSGLVL, AMPFFACT, <空>, NORM`
+字段格式：`EIGRA, SID, V1, V2, ND, MSGLVL, AMPFFACT, NORM`
 
 | 字段 | 取值/默认 | 物理含义 | 实际影响与风险 |
 |---|---|---|---|
@@ -21,13 +21,13 @@
 
 ## EIGRL —— Lanczos 模态提取（既有，Generated）
 
-字段格式：`EIGRL, SID, ND, V1, V2`
+字段格式：`EIGRL, SID, V1, V2, ND`
 
 | 字段 | 取值/默认 | 含义 | 影响与风险 |
 |---|---|---|---|
 | `SID` | 正整数 | 模态方法 ID | `METHOD=SID` |
-| `ND` | 正整数或空 | 提取模态数 | 与频率区间二选一或并用 |
 | `V1`/`V2` | 实数或空 | 频率下/上界（Hz） | 勿照搬 EIGRA 的“V2 必填”规则 |
+| `ND` | 正整数或空 | 提取模态数 | 与频率区间二选一或并用 |
 
 > 模态法选择：`modal.solver` 含 `AMSES`/`EIGRA` → 生成 EIGRA，否则生成 EIGRL。切换时 AMSES 专属字段自动隐藏。
 
@@ -41,11 +41,11 @@
 | `EXCITEID` | 正整数 → SPCD（强制运动）或 DAREA/载荷集 | 频域幅值 A 的来源与施加位置 | `TYPE=ACCE` 时通常引用 SPCD |
 | `DELAY` | 实数时间或非零整数 DELAY 卡 ID；默认 0 | 时间滞后 τ，产生 `−2πfτ` 相位 | **实数与整数卡 ID 语义不同**，界面必须区分（RealOrRef） |
 | `DPHASE` | 实数相位角（度）或非零整数 DPHASE 卡 ID；默认 0 | 固定相位 θ | 多次点激励时才常用 |
-| `TC` | 实数常量或 TABLED1 ID | 频率相关实部系数 C(f) | 单位实部输入用 `TC=1.0` |
-| `TD` | 实数常量或 TABLED1 ID | 频率相关虚部系数 D(f) | `TC=TD=0` 非法 |
+| `TC` | 非负整数 `TABLED1` ID（或留空/0） | 频率相关实部系数 C(f) | OptiStruct 要求填 `TABLEDi` 表号，不得直接写非零实数 |
+| `TD` | 非负整数 `TABLED1` ID（或留空/0） | 频率相关虚部系数 D(f) | `TC` 与 `TD` 不得同时为 0/空 |
 | `TYPE` | `LOAD`(默认)/`DISP`/`VELO`/`ACCE` | 载荷或强制位移/速度/加速度 | 对 SPCD 参考加速度必须选 ACCE，不得留默认 LOAD |
 
-> LoadCreator 生成的 RLOAD1 取 `TC=1.0, TD=0.0`（单位实部输入），`DELAY/DPHASE` 留空，`TYPE` 与激励类型一致。
+> LoadCreator 生成的 RLOAD1 自动生成单位常值 `TABLED1`（`FLAT`）供 `TC` 引用，`TD` 留空（0），`DELAY/DPHASE` 留空，`TYPE` 与激励类型一致。
 
 ## RLOAD2 —— 幅值/相位表达（既有，Generated）
 
@@ -97,7 +97,7 @@
 | `TYPE` | `G`(默认)/`CRIT`/`Q` | 损耗因子 / 临界阻尼比 ζ / 品质因数 Q | **ζ=0.02 ≠ G=0.02**；小阻尼 `G≈2ζ`、`Q≈1/(2ζ)` |
 | `FLAT` | 0(线性外推)/1(端点保持) | 超出定义频段的行为 | 高阻尼点后线性外推可能非物理 |
 
-> LoadCreator 以 `TYPE` 留空（默认 G）+ 用户输入的“临界阻尼比”作为比值写入，界面需明确显示实际写入的 TYPE 与换算，避免把 ζ 当 G 的误用。
+> LoadCreator 以 `TYPE=CRIT`、`FLAT` 将用户输入的“临界阻尼比 ζ”直接写入 `TABDMP1`（数据行从 `+` 续行起写，并以 `ENDT` 结束），与界面语义一致。
 
 ## SPCD —— 动态强制运动基准幅值（既有，Generated）
 

@@ -84,8 +84,6 @@ pub enum BulkCard {
     },
     Spc1 {
         sid: u64,
-        ps: String,
-        c: String,
         dofs: String,
         nodes: Vec<u64>,
     },
@@ -107,8 +105,8 @@ pub enum BulkCard {
     },
     Tabdmp1 {
         sid: u64,
-        xaxis: String,
-        yaxis: String,
+        dtype: String,
+        flat: bool,
         pairs: Vec<(f64, f64)>,
     },
     Rload2 {
@@ -141,6 +139,7 @@ pub enum BulkCard {
         sid: u64,
         xaxis: String,
         yaxis: String,
+        flat: bool,
         points: Vec<(f64, f64)>,
     },
     Randps {

@@ -12,6 +12,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Legacy tabular pipeline (preserved for compatibility).
             load_deck::parse_clipboard_table,
+            load_deck::validate_load_rows,
             load_deck::build_load_deck,
             load_deck::export_load_bundle,
             load_deck::export_output_file,
@@ -24,9 +25,14 @@ pub fn run() {
             commands::psd::read_psd_spectrum_file,
             commands::psd::psd_template_csv,
             commands::psd::write_psd_template,
+            // Radioss curve import / Functions table export.
+            commands::radioss::read_radioss_curve_file,
+            commands::radioss::export_radioss_functions_table,
             commands::project::save_project,
             commands::project::open_project,
             commands::project::migrate_legacy_workspace_cmd,
+            commands::project::save_text_file,
+            commands::project::read_text_file,
             commands::export::export_case_files,
         ])
         .run(tauri::generate_context!())

@@ -86,14 +86,14 @@ fn push_real_token(tokens: &mut Vec<String>, value: f64) -> Result<(), Diagnosti
     Ok(())
 }
 
-fn emit_continued(
+fn emit_inline_continued(
     out: &mut String,
     card: &str,
     header: &[String],
     data: &[String],
-    per_line: usize,
+    first_line_cap: usize,
+    cont_line_cap: usize,
 ) {
-    let mut lines: Vec<String> = Vec::new();
     let mut first = String::from(card);
     for token in header {
         first.push(',');
@@ -101,30 +101,70 @@ fn emit_continued(
     }
     let mut idx = 0usize;
     let mut count = 0usize;
-    while idx < data.len() && count < per_line {
+    while idx < data.len() && count < first_line_cap {
         first.push(',');
         first.push_str(&data[idx]);
         idx += 1;
         count += 1;
     }
-    lines.push(first);
+    out.push_str(&first);
+    out.push('\n');
+
     while idx < data.len() {
         let mut line = String::from("+");
         let mut c = 0usize;
-        while idx < data.len() && c < per_line {
+        while idx < data.len() && c < cont_line_cap {
             line.push(',');
             line.push_str(&data[idx]);
             idx += 1;
             c += 1;
         }
-        lines.push(line);
-    }
-    for (i, line) in lines.iter().enumerate() {
-        out.push_str(line);
-        if i + 1 < lines.len() {
-            out.push(',');
-        }
+        out.push_str(&line);
         out.push('\n');
+    }
+}
+
+/// Emit OptiStruct tabular cards (`TABDMP1`, `TABRND1`, `TABLED1`).
+/// Line 1 contains only header fields; data pairs start on the first `+`
+/// continuation line (up to 8 tokens / 4 pairs per line) and terminate with `ENDT`.
+fn emit_table_continued(out: &mut String, card: &str, header: &[String], data: &[String]) {
+    let mut first = String::from(card);
+    for token in header {
+        first.push(',');
+        first.push_str(token);
+    }
+    out.push_str(&first);
+    out.push('\n');
+
+    if data.is_empty() {
+        out.push_str("+,ENDT\n");
+        return;
+    }
+
+    let mut idx = 0usize;
+    while idx < data.len() {
+        let mut line = String::from("+");
+        let mut c = 0usize;
+        while idx < data.len() && c < 8 {
+            line.push(',');
+            line.push_str(&data[idx]);
+            idx += 1;
+            c += 1;
+        }
+        if idx == data.len() {
+            if c < 8 {
+                line.push_str(",ENDT");
+                out.push_str(&line);
+                out.push('\n');
+            } else {
+                out.push_str(&line);
+                out.push('\n');
+                out.push_str("+,ENDT\n");
+            }
+        } else {
+            out.push_str(&line);
+            out.push('\n');
+        }
     }
 }
 
@@ -179,32 +219,19 @@ fn write_card(out: &mut String, card: &BulkCard) -> Result<(), Diagnostic> {
             push_real_token(&mut tokens, *d)?;
             out.push_str(&format!("SPC,{}\n", tokens.join(",")));
         }
-        BulkCard::Spc1 {
-            sid,
-            ps,
-            c,
-            dofs,
-            nodes,
-        } => {
-            push_int_token(&mut tokens, *sid);
-            tokens.push(ps.clone());
-            tokens.push(c.clone());
-            tokens.push(dofs.clone());
-            for node in nodes {
-                push_int_token(&mut tokens, *node);
-            }
-            out.push_str(&format!("SPC1,{}\n", tokens.join(",")));
+        BulkCard::Spc1 { sid, dofs, nodes } => {
+            let header = vec![sid.to_string(), dofs.clone()];
+            let data: Vec<String> = nodes.iter().map(|n| n.to_string()).collect();
+            emit_inline_continued(out, "SPC1", &header, &data, 6, 8);
         }
         BulkCard::SpcAdd { sid, sets } => {
-            push_int_token(&mut tokens, *sid);
-            for set in sets {
-                push_int_token(&mut tokens, *set);
-            }
-            out.push_str(&format!("SPCADD,{}\n", tokens.join(",")));
+            let header = vec![sid.to_string()];
+            let data: Vec<String> = sets.iter().map(|s| s.to_string()).collect();
+            emit_inline_continued(out, "SPCADD", &header, &data, 7, 8);
         }
         BulkCard::Eigrl { sid, nd, v1, v2 } => {
+            // EIGRL, SID, V1, V2, ND
             push_int_token(&mut tokens, *sid);
-            tokens.push(nd.map(|v| v.to_string()).unwrap_or_default());
             tokens.push(match v1 {
                 Some(v) => fmt_real(*v)?,
                 None => String::new(),
@@ -213,6 +240,13 @@ fn write_card(out: &mut String, card: &BulkCard) -> Result<(), Diagnostic> {
                 Some(v) => fmt_real(*v)?,
                 None => String::new(),
             });
+            if let Some(n) = nd {
+                tokens.push(n.to_string());
+            } else {
+                while tokens.len() > 1 && tokens.last().is_some_and(String::is_empty) {
+                    tokens.pop();
+                }
+            }
             out.push_str(&format!("EIGRL,{}\n", tokens.join(",")));
         }
         BulkCard::Freq1 { sid, f1, df, nd } => {
@@ -224,17 +258,22 @@ fn write_card(out: &mut String, card: &BulkCard) -> Result<(), Diagnostic> {
         }
         BulkCard::Tabdmp1 {
             sid,
-            xaxis,
-            yaxis,
+            dtype,
+            flat,
             pairs,
         } => {
-            let header = vec![sid.to_string(), xaxis.clone(), yaxis.clone()];
+            let mut header = vec![sid.to_string(), dtype.clone()];
+            if *flat {
+                header.push("FLAT".to_string());
+            } else if dtype.is_empty() {
+                header.pop();
+            }
             let mut data = Vec::with_capacity(pairs.len() * 2);
             for (f, g) in pairs {
                 data.push(fmt_real(*f)?);
                 data.push(fmt_real(*g)?);
             }
-            emit_continued(out, "TABDMP1", &header, &data, 8);
+            emit_table_continued(out, "TABDMP1", &header, &data);
         }
         BulkCard::Rload2 {
             sid,
@@ -278,7 +317,7 @@ fn write_card(out: &mut String, card: &BulkCard) -> Result<(), Diagnostic> {
                 data.push(fmt_real(*s)?);
                 data.push(load.to_string());
             }
-            emit_continued(out, "DLOAD", &header, &data, 8);
+            emit_inline_continued(out, "DLOAD", &header, &data, 6, 8);
         }
         BulkCard::Spcd {
             sid,
@@ -308,15 +347,19 @@ fn write_card(out: &mut String, card: &BulkCard) -> Result<(), Diagnostic> {
             sid,
             xaxis,
             yaxis,
+            flat,
             points,
         } => {
-            let header = vec![sid.to_string(), xaxis.clone(), yaxis.clone()];
+            let mut header = vec![sid.to_string(), xaxis.clone(), yaxis.clone()];
+            if *flat {
+                header.push("FLAT".to_string());
+            }
             let mut data = Vec::with_capacity(points.len() * 2);
             for (f, p) in points {
                 data.push(fmt_real(*f)?);
                 data.push(fmt_real(*p)?);
             }
-            emit_continued(out, "TABRND1", &header, &data, 8);
+            emit_table_continued(out, "TABRND1", &header, &data);
         }
         BulkCard::Randps {
             sid,
@@ -343,7 +386,7 @@ fn write_card(out: &mut String, card: &BulkCard) -> Result<(), Diagnostic> {
             ampffact,
             norm,
         } => {
-            // EIGRA, SID, V1, V2, ND, MSGLVL, AMPFFACT, <blank>, NORM (SPEC A5.1)
+            // EIGRA, SID, V1, V2, ND, MSGLVL, AMPFFACT, NORM
             push_int_token(&mut tokens, *sid);
             tokens.push(match v1 {
                 Some(v) => fmt_real(*v)?,
@@ -356,8 +399,13 @@ fn write_card(out: &mut String, card: &BulkCard) -> Result<(), Diagnostic> {
                 Some(v) => fmt_real(*v)?,
                 None => String::new(),
             });
-            tokens.push(String::new()); // reserved blank field
-            tokens.push(norm.clone().unwrap_or_default());
+            if let Some(n) = norm {
+                tokens.push(n.clone());
+            } else {
+                while tokens.len() > 1 && tokens.last().is_some_and(String::is_empty) {
+                    tokens.pop();
+                }
+            }
             out.push_str(&format!("EIGRA,{}\n", tokens.join(",")));
         }
         BulkCard::Freq2 { sid, f1, f2, nf } => {
@@ -373,7 +421,7 @@ fn write_card(out: &mut String, card: &BulkCard) -> Result<(), Diagnostic> {
             for f in freqs {
                 data.push(fmt_real(*f)?);
             }
-            emit_continued(out, "FREQ", &header, &data, 8);
+            emit_inline_continued(out, "FREQ", &header, &data, 7, 8);
         }
         BulkCard::Tabled1 {
             tid,
@@ -382,7 +430,7 @@ fn write_card(out: &mut String, card: &BulkCard) -> Result<(), Diagnostic> {
             flat,
             pairs,
         } => {
-            // TABLED1, TID, XAXIS, YAXIS, [FLAT], (x,y)...
+            // TABLED1, TID, XAXIS, YAXIS, [FLAT] + (x,y)... + ENDT
             let mut header = vec![tid.to_string(), xaxis.clone(), yaxis.clone()];
             if *flat {
                 header.push("FLAT".to_string());
@@ -392,7 +440,7 @@ fn write_card(out: &mut String, card: &BulkCard) -> Result<(), Diagnostic> {
                 data.push(fmt_real(*x)?);
                 data.push(fmt_real(*y)?);
             }
-            emit_continued(out, "TABLED1", &header, &data, 8);
+            emit_table_continued(out, "TABLED1", &header, &data);
         }
         BulkCard::Rload1 {
             sid,
@@ -415,14 +463,18 @@ fn write_card(out: &mut String, card: &BulkCard) -> Result<(), Diagnostic> {
                 Some(RealOrRef::Ref(id)) => id.to_string(),
                 None => String::new(),
             });
-            tokens.push(match tc {
-                TableOrConst::Constant(v) => fmt_real(*v)?,
-                TableOrConst::Table(id) => id.to_string(),
-            });
-            tokens.push(match td {
-                TableOrConst::Constant(v) => fmt_real(*v)?,
-                TableOrConst::Table(id) => id.to_string(),
-            });
+            let fmt_rload1_table = |val: &TableOrConst| -> Result<String, Diagnostic> {
+                match val {
+                    TableOrConst::Table(id) => Ok(id.to_string()),
+                    TableOrConst::Constant(v) if *v == 0.0 => Ok(String::new()),
+                    TableOrConst::Constant(_) => Err(Diagnostic::error(
+                        "LC-DECK-001",
+                        "OptiStruct RLOAD1 的 TC/TD 必须为 TABLED1 编号或留空/0，不支持直接填写非零实数",
+                    )),
+                }
+            };
+            tokens.push(fmt_rload1_table(tc)?);
+            tokens.push(fmt_rload1_table(td)?);
             tokens.push(rtype.clone());
             out.push_str(&format!("RLOAD1,{}\n", tokens.join(",")));
         }
@@ -446,7 +498,7 @@ fn write_subcase(out: &mut String, subcase: &Subcase) -> Result<(), Diagnostic> 
         out.push_str(&format!("  METHOD = {method}\n"));
     }
     if let Some(freq) = subcase.freq {
-        out.push_str(&format!("  FREQ = {freq}\n"));
+        out.push_str(&format!("  FREQUENCY = {freq}\n"));
     }
     if let Some(sdamping) = subcase.sdamping {
         out.push_str(&format!("  SDAMPING = {sdamping}\n"));

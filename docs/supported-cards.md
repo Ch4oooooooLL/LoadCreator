@@ -53,6 +53,8 @@
 | /IMPDISP | 受控位移 | NOT_RUN | NOT_RUN | tests/radioss.rs |
 | /BCS | 六自由度约束 | NOT_RUN | NOT_RUN | tests/radioss.rs |
 | /GRAV | 重力（可选） | NOT_RUN | NOT_RUN | — |
+| /SKEW/FIX | 自定义方向局部坐标系（可选） | NOT_RUN | NOT_RUN | tests/radioss.rs |
+| /INTER/TYPE7 | 工装-模型点面接触（可选） | NOT_RUN | NOT_RUN | tests/radioss.rs |
 | /AMS | AMS 作用 part group | NOT_RUN | NOT_RUN | tests/radioss.rs |
 | /RUN | 运行名 / Tstop | NOT_RUN | NOT_RUN | tests/radioss.rs |
 | /ANIM/DT | 动画间隔 | NOT_RUN | NOT_RUN | tests/radioss.rs |
@@ -60,6 +62,6 @@
 | /DT/NODA/CST | 节点质量缩放 | NOT_RUN | NOT_RUN | — |
 | /DT/AMS | AMS 时间步 | NOT_RUN | NOT_RUN | tests/radioss.rs |
 
-已实现（受控位移近似）：FOPS 落锤冲击增量复用 ROPS 引擎（/IMPDISP 竖直方向），并在诊断中给出落锤质量/落差换算的冲击速度与能量；沿用 /GRNOD/NODE、/FUNCT、/IMPDISP、/BCS 等卡片。
+已实现（受控位移近似）：ROPS/FOPS 增量支持正负坐标轴与自定义三维方向向量（自动生成 `/SKEW/FIX`）加载，并支持 `/INTER/TYPE7` 工装-模型接触定义；FOPS 额外在诊断中给出落锤质量/落差换算的冲击速度与能量。
 
-未实现：FOPS 落锤实体、初速度（/INIV）、/INTER/TYPE7、/RBODY、多阶段 Engine。
+未实现：FOPS 落锤实体、初速度（/INIV）、/RBODY、多阶段 Engine。

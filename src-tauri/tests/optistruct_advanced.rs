@@ -55,7 +55,7 @@ fn eigra_modal_method_emits_eigra_card() {
     }));
     let p = preview_case(req);
     assert!(p.summary.can_export, "diagnostics: {:?}", p.diagnostics);
-    assert!(p.fem_preview.contains("EIGRA,500001,0.0,300.0,,1,10.0,,MAX"), "got:\n{}", p.fem_preview);
+    assert!(p.fem_preview.contains("EIGRA,500001,0.0,300.0,,1,10.0,MAX"), "got:\n{}", p.fem_preview);
     assert!(!p.fem_preview.contains("EIGRL,500001"));
 }
 
@@ -72,7 +72,8 @@ fn rload1_excitation_emits_complex_card() {
     let req = base(json!({ "excitationForm": "RLOAD1" }));
     let p = preview_case(req);
     assert!(p.summary.can_export, "diagnostics: {:?}", p.diagnostics);
-    assert!(p.fem_preview.contains("RLOAD1,310001,320001,,,1.0,0.0,ACCE"), "got:\n{}", p.fem_preview);
+    assert!(p.fem_preview.contains("TABLED1,400002,LINEAR,LINEAR,FLAT\n+,10.0,1.0,200.0,1.0,ENDT"), "got:\n{}", p.fem_preview);
+    assert!(p.fem_preview.contains("RLOAD1,310001,320001,,,400002,,ACCE"), "got:\n{}", p.fem_preview);
     assert!(!p.fem_preview.contains("RLOAD2,"));
 }
 
@@ -165,7 +166,56 @@ fn tabled1_and_rload1_with_refs_and_tables_serialize() {
         &WriterOptions::default(),
     )
     .expect("write");
-    assert!(text.contains("TABLED1,600001,LINEAR,SMOOTH,FLAT,1.0,1.0,10.0,0.5"), "got:\n{text}");
-    // DELAY renders as integer card ref, DPHASE as real, TC as table ref.
-    assert!(text.contains("RLOAD1,310001,320001,7,90.0,600001,0.0,ACCE"), "got:\n{text}");
+    assert!(text.contains("TABLED1,600001,LINEAR,SMOOTH,FLAT\n+,1.0,1.0,10.0,0.5,ENDT"), "got:\n{text}");
+    // DELAY renders as integer card ref, DPHASE as real, TC as table ref, TD blank (0).
+    assert!(text.contains("RLOAD1,310001,320001,7,90.0,600001,,ACCE"), "got:\n{text}");
+}
+
+#[test]
+fn multi_line_continuations_respect_optistruct_field_limits() {
+    let mut frag = DeckFragment::new(111);
+    frag.subcases.push(Subcase {
+        id: 101,
+        label: "CONT".into(),
+        analysis: Some("MFREQ".into()),
+        ..Default::default()
+    });
+    // 8 nodes on SPC1 -> 6 on line 1, 2 on '+' line.
+    frag.bulk_cards.push(BulkCard::Spc1 {
+        sid: 900001,
+        dofs: "123456".into(),
+        nodes: vec![1, 2, 3, 4, 5, 6, 7, 8],
+    });
+    // 4 pairs (8 tokens) on TABRND1 -> full '+' line, ENDT on next '+' line.
+    frag.bulk_cards.push(BulkCard::Tabrnd1 {
+        sid: 400001,
+        xaxis: "LOG".into(),
+        yaxis: "LOG".into(),
+        flat: true,
+        points: vec![(10.0, 0.1), (20.0, 0.2), (50.0, 0.3), (100.0, 0.1)],
+    });
+    // 9 frequencies on FREQ -> 7 on line 1, 2 on '+' line.
+    frag.bulk_cards.push(BulkCard::FreqList {
+        sid: 500101,
+        freqs: vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0],
+    });
+    let text = write_fem(
+        &WriteInput {
+            title: "C",
+            solver: "optistruct",
+            solver_version: "2022",
+            fragment: &frag,
+        },
+        &WriterOptions::default(),
+    )
+    .expect("write");
+    assert!(text.contains("SPC1,900001,123456,1,2,3,4,5,6\n+,7,8\n"), "got:\n{text}");
+    assert!(
+        text.contains("TABRND1,400001,LOG,LOG,FLAT\n+,10.0,0.1,20.0,0.2,50.0,0.3,100.0,0.1\n+,ENDT\n"),
+        "got:\n{text}"
+    );
+    assert!(
+        text.contains("FREQ,500101,10.0,20.0,30.0,40.0,50.0,60.0,70.0\n+,80.0,90.0\n"),
+        "got:\n{text}"
+    );
 }

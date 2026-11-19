@@ -253,6 +253,92 @@ fn gravity_uses_unit_aware_scale() {
 }
 
 #[test]
+fn gravity_table_emits_multiple_subcases_without_normalizing_coefficients() {
+    let req: CaseRequest = serde_json::from_value(json!({
+        "projectName": "GravTable",
+        "case": {
+            "kind": "gravity",
+            "parameters": {
+                "name": "GravTable",
+                "modelUnits": "N-mm-s",
+                "existingSpcSetId": 900001,
+                "cases": [
+                    {
+                        "name": "Gravity_Z",
+                        "acceleration": 9806.65,
+                        "nx": 0.0,
+                        "ny": 0.0,
+                        "nz": -1.0,
+                        "cid": 0
+                    },
+                    {
+                        "name": "Braking_XZ",
+                        "acceleration": 9806.65,
+                        "nx": -0.8,
+                        "ny": 0.0,
+                        "nz": -1.0,
+                        "cid": 2
+                    }
+                ]
+            }
+        }
+    }))
+    .unwrap();
+    let preview = preview_case(req);
+    assert!(
+        preview.summary.can_export,
+        "diagnostics: {:?}",
+        preview.diagnostics
+    );
+    assert_eq!(preview.summary.subcase_count, 2);
+    assert!(preview.fem_preview.contains("SUBCASE 101"));
+    assert!(preview.fem_preview.contains("LABEL = Gravity_Z"));
+    assert!(preview.fem_preview.contains("SUBCASE 102"));
+    assert!(preview.fem_preview.contains("LABEL = Braking_XZ"));
+    assert!(preview
+        .fem_preview
+        .contains("GRAV,300001,0,9806.65,0.0,0.0,-1.0"));
+    assert!(preview
+        .fem_preview
+        .contains("GRAV,300002,2,9806.65,-0.8,0.0,-1.0"));
+}
+
+#[test]
+fn gravity_table_rejects_zero_coefficients_and_empty_name() {
+    let req: CaseRequest = serde_json::from_value(json!({
+        "projectName": "BadGrav",
+        "case": {
+            "kind": "gravity",
+            "parameters": {
+                "name": "BadGrav",
+                "modelUnits": "N-mm-s",
+                "cases": [
+                    {
+                        "name": "",
+                        "acceleration": 9806.65,
+                        "nx": 0.0,
+                        "ny": 0.0,
+                        "nz": 0.0,
+                        "cid": 0
+                    }
+                ]
+            }
+        }
+    }))
+    .unwrap();
+    let preview = preview_case(req);
+    assert!(!preview.summary.can_export);
+    assert!(preview
+        .diagnostics
+        .iter()
+        .any(|d| d.code == "LC-INPUT-001" && d.field_path.as_deref() == Some("cases[0].name")));
+    assert!(preview
+        .diagnostics
+        .iter()
+        .any(|d| d.code == "LC-INPUT-001" && d.field_path.as_deref() == Some("cases[0].direction")));
+}
+
+#[test]
 fn tabular_load_still_works_through_command() {
     let req: CaseRequest = serde_json::from_value(json!({
         "projectName": "Legacy",
@@ -277,4 +363,144 @@ fn tabular_load_still_works_through_command() {
     let fem = build.files.get("Legacy.fem").unwrap();
     assert!(fem.contains("FORCE,100001,1001"));
     assert!(!fem.contains("GRID,"));
+}
+
+#[test]
+fn normal_modes_emits_modes_analysis_and_eigrl_field_order() {
+    let req: CaseRequest = serde_json::from_value(json!({
+        "projectName": "Modes_Test",
+        "case": {
+            "kind": "normal-modes",
+            "parameters": {
+                "name": "EngineCover_Modes",
+                "modelUnits": "N-mm-s",
+                "existingSpcSetId": 900001,
+                "eigrlMinHz": 0.0,
+                "eigrlMaxHz": 300.0,
+                "numModes": 10
+            }
+        }
+    }))
+    .unwrap();
+    let p = preview_case(req);
+    assert!(p.summary.can_export, "diagnostics: {:?}", p.diagnostics);
+    assert!(p.fem_preview.contains("SOL 103"));
+    assert!(p.fem_preview.contains("ANALYSIS = MODES"));
+    assert!(!p.fem_preview.contains("ANALYSIS = MODAL"));
+    assert!(p.fem_preview.contains("EIGRL,500001,0.0,300.0,10"));
+
+    // Reject invalid zero ND / zero SPC ID.
+    let bad_req: CaseRequest = serde_json::from_value(json!({
+        "projectName": "Modes_Bad",
+        "case": {
+            "kind": "normal-modes",
+            "parameters": {
+                "name": "Bad_Modes",
+                "modelUnits": "N-mm-s",
+                "existingSpcSetId": 0,
+                "numModes": 0
+            }
+        }
+    }))
+    .unwrap();
+    let bad = preview_case(bad_req);
+    assert!(!bad.summary.can_export);
+    assert!(bad.diagnostics.iter().any(|d| d.code == "LC-REF-001"));
+    assert!(bad.diagnostics.iter().any(|d| d.code == "LC-INPUT-001"));
+}
+
+#[test]
+fn frequency_response_emits_dload_and_validates_ranges() {
+    let req: CaseRequest = serde_json::from_value(json!({
+        "projectName": "Freq_Test",
+        "case": {
+            "kind": "frequency-response",
+            "parameters": {
+                "name": "FRF_Sweep",
+                "modelUnits": "N-mm-s",
+                "existingSpcSetId": 900001,
+                "loadId": 300101,
+                "frequencyMinHz": 10.0,
+                "frequencyMaxHz": 200.0,
+                "frequencyStepHz": 5.0,
+                "eigrlMinHz": 0.0,
+                "eigrlMaxHz": 300.0,
+                "dampingRatio": 0.02
+            }
+        }
+    }))
+    .unwrap();
+    let p = preview_case(req);
+    assert!(p.summary.can_export, "diagnostics: {:?}", p.diagnostics);
+    assert!(p.fem_preview.contains("ANALYSIS = MFREQ"));
+    assert!(p.fem_preview.contains("  DLOAD = 300101\n"));
+    assert!(!p.fem_preview.contains("\n  LOAD = 300101"));
+    assert!(p.fem_preview.contains("FREQUENCY = 500101"));
+    assert!(p.fem_preview.contains("EIGRL,500001,0.0,300.0"));
+    assert!(p.fem_preview.contains("FREQ1,500101,10.0,5.0,38"));
+    assert!(p.fem_preview.contains("TABDMP1,500201,CRIT,FLAT\n+,10.0,0.02,200.0,0.02,ENDT"));
+
+    let bad_req: CaseRequest = serde_json::from_value(json!({
+        "projectName": "Freq_Bad",
+        "case": {
+            "kind": "frequency-response",
+            "parameters": {
+                "name": "FRF_Bad",
+                "modelUnits": "N-mm-s",
+                "existingSpcSetId": 0,
+                "loadId": 0,
+                "frequencyMinHz": -5.0,
+                "frequencyMaxHz": 200.0,
+                "frequencyStepHz": 5.0,
+                "eigrlMinHz": 300.0,
+                "eigrlMaxHz": 100.0,
+                "dampingRatio": 1.5
+            }
+        }
+    }))
+    .unwrap();
+    let bad = preview_case(bad_req);
+    assert!(!bad.summary.can_export);
+    assert!(bad.diagnostics.len() >= 4);
+}
+
+#[test]
+fn nodal_static_rejects_zero_spc_and_all_zero_loads() {
+    let bad_req: CaseRequest = serde_json::from_value(json!({
+        "projectName": "Static_Bad",
+        "case": {
+            "kind": "nodal-static",
+            "parameters": {
+                "name": "Zero_Load",
+                "modelUnits": "N-mm-s",
+                "existingSpcSetId": 0,
+                "loads": [{ "nodeId": 1001, "fx": 0.0, "fy": 0.0, "fz": 0.0 }]
+            }
+        }
+    }))
+    .unwrap();
+    let bad = preview_case(bad_req);
+    assert!(!bad.summary.can_export);
+    assert!(bad.diagnostics.iter().any(|d| d.code == "LC-REF-001"));
+    assert!(bad.diagnostics.iter().any(|d| d.code == "LC-INPUT-001"));
+}
+
+#[test]
+fn constraint_deduplicates_dofs_and_rejects_zero_external_spc() {
+    let req: CaseRequest = serde_json::from_value(json!({
+        "projectName": "Spc_Dedup",
+        "case": {
+            "kind": "constraint",
+            "parameters": {
+                "name": "Fix_Dedup",
+                "modelUnits": "N-mm-s",
+                "mode": "new",
+                "rows": [{ "nodeId": 2001, "dofs": [3, 1, 1, 2], "value": 0.0 }]
+            }
+        }
+    }))
+    .unwrap();
+    let p = preview_case(req);
+    assert!(p.summary.can_export, "diagnostics: {:?}", p.diagnostics);
+    assert!(p.fem_preview.contains("SPC1,900001,123,2001\n"), "got:\n{}", p.fem_preview);
 }

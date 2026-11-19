@@ -52,15 +52,23 @@ fn external_spc(excitation: &Excitation) -> u64 {
 }
 
 /// Push the amplitude/phase (RLOAD2) or complex real/imag (RLOAD1) load card.
-fn push_rload(frag: &mut DeckFragment, sid: u64, exciteid: u64, rtype: &str, form: &str) {
+fn push_rload(
+    frag: &mut DeckFragment,
+    sid: u64,
+    exciteid: u64,
+    rtype: &str,
+    form: &str,
+    unit_table_tid: Option<u64>,
+) {
     if form.eq_ignore_ascii_case("RLOAD1") {
+        let tid = unit_table_tid.expect("unit TABLED1 id required for RLOAD1");
         frag.bulk_cards.push(BulkCard::Rload1 {
             sid,
             exciteid,
             delay: None,
             dphase: None,
-            // Unit real input: TC=1.0 (real), TD=0.0 (imag) per SPEC A3.
-            tc: TableOrConst::Constant(1.0),
+            // OptiStruct RLOAD1 TC/TD require TABLEDi integer IDs (or blank/0); TD left 0/blank.
+            tc: TableOrConst::Table(tid),
             td: TableOrConst::Constant(0.0),
             rtype: rtype.into(),
         });
@@ -121,7 +129,11 @@ fn push_freq_card(frag: &mut DeckFragment, sid: u64, spec: &RandomPsdSpec, fkind
         }
         _ => {
             let span = (spec.frequency.max_hz - spec.frequency.min_hz) / spec.frequency.step_hz;
-            let nd = (span.round() as u64).saturating_add(1).max(2);
+            let nd = if span.is_finite() && span > 0.0 {
+                (span + 1e-9).floor().max(1.0) as u64
+            } else {
+                1
+            };
             frag.bulk_cards.push(BulkCard::Freq1 {
                 sid,
                 f1: spec.frequency.min_hz,
@@ -191,6 +203,9 @@ fn validate_frequency(spec: &RandomPsdSpec, fkind: &str, ctx: &mut GenerationCon
             }
         }
         _ => {
+            if !(f.min_hz.is_finite() && f.min_hz >= 0.0) {
+                ctx.error("LC-INPUT-001", "求解频段下限必须为非负有限值");
+            }
             if !(f.step_hz.is_finite() && f.step_hz > 0.0) {
                 ctx.error("LC-INPUT-001", "频率步长必须为正的有限值");
             }
@@ -209,6 +224,18 @@ pub fn generate(spec: &RandomPsdSpec) -> BuiltCase {
         spec.id_policy.clone(),
     );
     let mut frag = DeckFragment::new(111);
+    generate_into(spec, &spec.name, None, true, &mut ctx, &mut frag);
+    BuiltCase::new(frag, ctx)
+}
+
+pub fn generate_into(
+    spec: &RandomPsdSpec,
+    key_prefix: &str,
+    label_override: Option<&str>,
+    spc_is_external: bool,
+    ctx: &mut GenerationContext,
+    frag: &mut DeckFragment,
+) {
 
     let units = match require_units(&spec.model_units) {
         Ok(u) => Some(u),
@@ -241,7 +268,7 @@ pub fn generate(spec: &RandomPsdSpec) -> BuiltCase {
     if !matches!(fkind.as_str(), "FREQ1" | "FREQ2" | "FREQ") {
         ctx.error("LC-INPUT-001", "频率定义类型必须为 FREQ1 / FREQ2 / FREQ");
     }
-    validate_frequency(spec, &fkind, &mut ctx);
+    validate_frequency(spec, &fkind, ctx);
 
     // --- modal truncation warning ----------------------------------------
     if spec.modal.max_hz.is_finite() && spec.modal.max_hz < spec.frequency.max_hz {
@@ -278,6 +305,20 @@ pub fn generate(spec: &RandomPsdSpec) -> BuiltCase {
                         );
                     }
                 }
+                if e.nd == Some(0) {
+                    ctx.diagnostics.push(
+                        Diagnostic::error("LC-PSD-020", "EIGRA ND 必须为正整数")
+                            .field("eigra.nd"),
+                    );
+                }
+                if let Some(msglvl) = e.msglvl {
+                    if msglvl > 1 {
+                        ctx.diagnostics.push(
+                            Diagnostic::error("LC-PSD-020", "EIGRA MSGLVL 只能为 0 或 1")
+                                .field("eigra.msglvl"),
+                        );
+                    }
+                }
                 if let Some(norm) = &e.norm {
                     let n = norm.to_ascii_uppercase();
                     if !matches!(n.as_str(), "MASS" | "MAX" | "ALL") {
@@ -303,6 +344,19 @@ pub fn generate(spec: &RandomPsdSpec) -> BuiltCase {
                 )
                 .field("eigra"),
             ),
+        }
+    } else {
+        if !spec.modal.min_hz.is_finite() || spec.modal.min_hz < 0.0 {
+            ctx.diagnostics.push(
+                Diagnostic::error("LC-INPUT-001", "EIGRL 模态下限 V1 必须为非负有限值")
+                    .field("modal.minHz"),
+            );
+        }
+        if !spec.modal.max_hz.is_finite() || spec.modal.max_hz <= spec.modal.min_hz {
+            ctx.diagnostics.push(
+                Diagnostic::error("LC-INPUT-001", "EIGRL 模态上限 V2 必须大于下限 V1")
+                    .field("modal.maxHz"),
+            );
         }
     }
 
@@ -348,6 +402,12 @@ pub fn generate(spec: &RandomPsdSpec) -> BuiltCase {
             if *node_id == 0 {
                 ctx.error("LC-INPUT-001", "被激励节点号必须为正整数");
             }
+            if *existing_spc_set_id == 0 {
+                ctx.error("LC-REF-001", "外部 SPC Set ID 必须为正整数");
+            }
+            if !reference_amplitude_g.is_finite() || *reference_amplitude_g <= 0.0 {
+                ctx.error("LC-INPUT-001", "参考加速度幅值必须为正的有限值");
+            }
             if !tri && !(1..=3).contains(component) {
                 ctx.error("LC-INPUT-001", "基座加速度分量必须为 1/2/3（平动 X/Y/Z）");
             }
@@ -360,12 +420,14 @@ pub fn generate(spec: &RandomPsdSpec) -> BuiltCase {
                     .field("confirmExcitedDofInSpc"),
                 );
             }
-            ctx.note_external(
-                IdKind::Spc,
-                *existing_spc_set_id,
-                Some("existing SPC set".into()),
-                "random-psd",
-            );
+            if spc_is_external && *existing_spc_set_id > 0 {
+                ctx.note_external(
+                    IdKind::Spc,
+                    *existing_spc_set_id,
+                    Some("existing SPC set".into()),
+                    "random-psd",
+                );
+            }
             ctx.note_external(
                 IdKind::Node,
                 *node_id,
@@ -386,6 +448,9 @@ pub fn generate(spec: &RandomPsdSpec) -> BuiltCase {
             if *node_id == 0 {
                 ctx.error("LC-INPUT-001", "被激励节点号必须为正整数");
             }
+            if *existing_spc_set_id == 0 {
+                ctx.error("LC-REF-001", "外部 SPC Set ID 必须为正整数");
+            }
             if Vec3::new(direction[0], direction[1], direction[2])
                 .normalized()
                 .is_none()
@@ -401,12 +466,14 @@ pub fn generate(spec: &RandomPsdSpec) -> BuiltCase {
                     .field("confirmExcitedDofInSpc"),
                 );
             }
-            ctx.note_external(
-                IdKind::Spc,
-                *existing_spc_set_id,
-                Some("existing SPC set".into()),
-                "random-psd",
-            );
+            if spc_is_external && *existing_spc_set_id > 0 {
+                ctx.note_external(
+                    IdKind::Spc,
+                    *existing_spc_set_id,
+                    Some("existing SPC set".into()),
+                    "random-psd",
+                );
+            }
             ctx.note_external(
                 IdKind::Node,
                 *node_id,
@@ -437,17 +504,17 @@ pub fn generate(spec: &RandomPsdSpec) -> BuiltCase {
     }
 
     // --- shared ids: method / freq / damping / table ---------------------
-    let method_sid = ctx.allocate(IdKind::Method, &format!("{}#eigrl", spec.name));
-    let freq_sid = ctx.allocate(IdKind::Freq, &format!("{}#freq", spec.name));
-    let damp_sid = ctx.allocate(IdKind::Damping, &format!("{}#damp", spec.name));
-    let table_sid = ctx.allocate(IdKind::Table, &format!("{}#tabrnd1", spec.name));
+    let method_sid = ctx.allocate(IdKind::Method, &format!("{key_prefix}#eigrl"));
+    let freq_sid = ctx.allocate(IdKind::Freq, &format!("{key_prefix}#freq"));
+    let damp_sid = ctx.allocate(IdKind::Damping, &format!("{key_prefix}#damp"));
+    let table_sid = ctx.allocate(IdKind::Table, &format!("{key_prefix}#tabrnd1"));
 
-    push_modal_card(&mut frag, method_sid, spec, use_eigra);
-    push_freq_card(&mut frag, freq_sid, spec, &fkind);
+    push_modal_card(frag, method_sid, spec, use_eigra);
+    push_freq_card(frag, freq_sid, spec, &fkind);
     frag.bulk_cards.push(BulkCard::Tabdmp1 {
         sid: damp_sid,
-        xaxis: String::new(),
-        yaxis: String::new(),
+        dtype: "CRIT".into(),
+        flat: true,
         pairs: vec![
             (spec.frequency.min_hz, damping_ratio),
             (spec.frequency.max_hz, damping_ratio),
@@ -458,10 +525,32 @@ pub fn generate(spec: &RandomPsdSpec) -> BuiltCase {
         sid: table_sid,
         xaxis: xaxis.into(),
         yaxis: yaxis.into(),
+        flat: spec.spectrum.out_of_range.eq_ignore_ascii_case("FLAT"),
         points: points.clone(),
     });
 
-    let base = ascii_name(&spec.name);
+    let unit_table_tid = if exc_form.eq_ignore_ascii_case("RLOAD1") {
+        let tid = ctx.allocate(IdKind::Table, &format!("{key_prefix}#unit_tabled1"));
+        let f_hi = if spec.frequency.max_hz > spec.frequency.min_hz {
+            spec.frequency.max_hz
+        } else {
+            spec.frequency.min_hz + 1.0
+        };
+        frag.bulk_cards.push(BulkCard::Tabled1 {
+            tid,
+            xaxis: "LINEAR".into(),
+            yaxis: "LINEAR".into(),
+            flat: true,
+            pairs: vec![(spec.frequency.min_hz, 1.0), (f_hi, 1.0)],
+        });
+        Some(tid)
+    } else {
+        None
+    };
+
+    let base = label_override
+        .map(ToString::to_string)
+        .unwrap_or_else(|| ascii_name(&spec.name));
     let spc = external_spc(&spec.excitation);
     let rand_outputs = random_outputs(spec);
 
@@ -477,12 +566,12 @@ pub fn generate(spec: &RandomPsdSpec) -> BuiltCase {
         };
         let value = accel_unit.unwrap_or(0.0);
         for comp in [1u32, 2u32, 3u32] {
-            let spcd_sid = ctx.allocate(IdKind::Spcd, &format!("{}#axis{}#spcd", spec.name, comp));
-            let rload_sid = ctx.allocate(IdKind::Rload, &format!("{}#axis{}#rload", spec.name, comp));
-            let dload_sid = ctx.allocate(IdKind::Dload, &format!("{}#axis{}#dload", spec.name, comp));
-            let mfreq_sub = ctx.allocate(IdKind::Subcase, &format!("{}#axis{}#mfreq", spec.name, comp));
-            let random_sub = ctx.allocate(IdKind::Subcase, &format!("{}#axis{}#random", spec.name, comp));
-            let randps_sid = ctx.allocate(IdKind::Random, &format!("{}#axis{}#randps", spec.name, comp));
+            let spcd_sid = ctx.allocate(IdKind::Spcd, &format!("{key_prefix}#axis{comp}#spcd"));
+            let rload_sid = ctx.allocate(IdKind::Rload, &format!("{key_prefix}#axis{comp}#rload"));
+            let dload_sid = ctx.allocate(IdKind::Dload, &format!("{key_prefix}#axis{comp}#dload"));
+            let mfreq_sub = ctx.allocate(IdKind::Subcase, &format!("{key_prefix}#axis{comp}#mfreq"));
+            let random_sub = ctx.allocate(IdKind::Subcase, &format!("{key_prefix}#axis{comp}#random"));
+            let randps_sid = ctx.allocate(IdKind::Random, &format!("{key_prefix}#axis{comp}#randps"));
 
             frag.bulk_cards.push(BulkCard::Spcd {
                 sid: spcd_sid,
@@ -490,7 +579,7 @@ pub fn generate(spec: &RandomPsdSpec) -> BuiltCase {
                 component: comp,
                 d: value,
             });
-            push_rload(&mut frag, rload_sid, spcd_sid, "ACCE", &exc_form);
+            push_rload(frag, rload_sid, spcd_sid, "ACCE", &exc_form, unit_table_tid);
             frag.bulk_cards.push(BulkCard::Dload {
                 sid: dload_sid,
                 scale: 1.0,
@@ -530,17 +619,17 @@ pub fn generate(spec: &RandomPsdSpec) -> BuiltCase {
         }
     } else {
         // Single-axis. Allocation order preserved for golden determinism.
-        let mfreq_sub = ctx.allocate(IdKind::Subcase, &format!("{}#mfreq", spec.name));
-        let random_sub = ctx.allocate(IdKind::Subcase, &format!("{}#random", spec.name));
-        let randps_sid = ctx.allocate(IdKind::Random, &format!("{}#randps", spec.name));
-        let dload_sid = ctx.allocate(IdKind::Dload, &format!("{}#dload", spec.name));
-        let rload_sid = ctx.allocate(IdKind::Rload, &format!("{}#rload2", spec.name));
+        let mfreq_sub = ctx.allocate(IdKind::Subcase, &format!("{key_prefix}#mfreq"));
+        let random_sub = ctx.allocate(IdKind::Subcase, &format!("{key_prefix}#random"));
+        let randps_sid = ctx.allocate(IdKind::Random, &format!("{key_prefix}#randps"));
+        let dload_sid = ctx.allocate(IdKind::Dload, &format!("{key_prefix}#dload"));
+        let rload_sid = ctx.allocate(IdKind::Rload, &format!("{key_prefix}#rload2"));
 
         match &spec.excitation {
             Excitation::BaseAcceleration {
                 node_id, component, ..
             } => {
-                let spcd_sid = ctx.allocate(IdKind::Spcd, &format!("{}#spcd", spec.name));
+                let spcd_sid = ctx.allocate(IdKind::Spcd, &format!("{key_prefix}#spcd"));
                 let value = accel_unit.unwrap_or(0.0);
                 frag.bulk_cards.push(BulkCard::Spcd {
                     sid: spcd_sid,
@@ -548,7 +637,7 @@ pub fn generate(spec: &RandomPsdSpec) -> BuiltCase {
                     component: *component,
                     d: value,
                 });
-                push_rload(&mut frag, rload_sid, spcd_sid, "ACCE", &exc_form);
+                push_rload(frag, rload_sid, spcd_sid, "ACCE", &exc_form, unit_table_tid);
             }
             Excitation::AppliedForce {
                 node_id,
@@ -556,7 +645,7 @@ pub fn generate(spec: &RandomPsdSpec) -> BuiltCase {
                 reference_force_n,
                 ..
             } => {
-                let darea_sid = ctx.allocate(IdKind::Darea, &format!("{}#darea", spec.name));
+                let darea_sid = ctx.allocate(IdKind::Darea, &format!("{key_prefix}#darea"));
                 let dir = Vec3::new(direction[0], direction[1], direction[2])
                     .normalized()
                     .unwrap_or(Vec3::new(1.0, 0.0, 0.0));
@@ -570,7 +659,7 @@ pub fn generate(spec: &RandomPsdSpec) -> BuiltCase {
                         });
                     }
                 }
-                push_rload(&mut frag, rload_sid, darea_sid, "LOAD", &exc_form);
+                push_rload(frag, rload_sid, darea_sid, "LOAD", &exc_form, unit_table_tid);
             }
         }
 
@@ -611,6 +700,4 @@ pub fn generate(spec: &RandomPsdSpec) -> BuiltCase {
             ..Default::default()
         });
     }
-
-    BuiltCase::new(frag, ctx)
 }

@@ -422,14 +422,14 @@ fn parse_grid(grid: &[Vec<String>]) -> GridOutcome {
     }
 }
 
-fn numeric_cells(row: &[String]) -> Vec<(usize, f64)> {
+pub fn numeric_cells(row: &[String]) -> Vec<(usize, f64)> {
     row.iter()
         .enumerate()
         .filter_map(|(i, cell)| parse_number_cell(cell).map(|v| (i, v)))
         .collect()
 }
 
-fn detect_index_column(candidates: &[(usize, Vec<(usize, f64)>)]) -> bool {
+pub fn detect_index_column(candidates: &[(usize, Vec<(usize, f64)>)]) -> bool {
     if candidates.is_empty() {
         return false;
     }
@@ -558,7 +558,7 @@ fn is_psd_header(cell: &str) -> bool {
         || matches!(n.as_str(), "谱值" | "asd" | "g2hz" | "g2hz值")
 }
 
-fn normalize_header(input: &str) -> String {
+pub fn normalize_header(input: &str) -> String {
     let mut out = String::new();
     for ch in input.chars() {
         let mapped = match ch {
@@ -600,7 +600,7 @@ fn normalize_header(input: &str) -> String {
     out
 }
 
-fn detect_delimiter(lines: &[&str]) -> char {
+pub fn detect_delimiter(lines: &[&str]) -> char {
     let mut tab = 0usize;
     let mut comma = 0usize;
     let mut semi = 0usize;
@@ -639,7 +639,7 @@ fn delimiter_name(delimiter: char) -> String {
     .to_string()
 }
 
-fn split_fields(line: &str, delimiter: char) -> Vec<String> {
+pub fn split_fields(line: &str, delimiter: char) -> Vec<String> {
     match delimiter {
         '\t' => line.split('\t').map(|s| s.to_string()).collect(),
         ',' => line.split(',').map(|s| s.to_string()).collect(),
@@ -666,7 +666,7 @@ fn guess_interpolation(text: &str) -> Option<String> {
     None
 }
 
-fn data_to_string(data: &calamine::Data) -> String {
+pub fn data_to_string(data: &calamine::Data) -> String {
     use calamine::Data;
     match data {
         Data::Empty => String::new(),

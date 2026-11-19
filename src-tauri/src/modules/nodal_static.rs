@@ -13,30 +13,53 @@ pub fn generate(spec: &NodalStaticSpec) -> BuiltCase {
         spec.id_policy.clone(),
     );
     let mut frag = DeckFragment::new(101);
+    let _ = generate_into(spec, &spec.name, None, true, &mut ctx, &mut frag);
+    BuiltCase::new(frag, ctx)
+}
 
+pub fn generate_into(
+    spec: &NodalStaticSpec,
+    key_prefix: &str,
+    label_override: Option<&str>,
+    spc_is_external: bool,
+    ctx: &mut GenerationContext,
+    frag: &mut DeckFragment,
+) -> Option<u64> {
     if let Err(d) = require_units(&spec.model_units) {
         ctx.diagnostics.push(d);
     }
     if spec.loads.is_empty() {
         ctx.error("LC-INPUT-001", "节点静力至少需要一条载荷行");
     }
-    let spc = spec.existing_spc_set_id;
-    match spc {
-        Some(id) => ctx.note_external(
+    let spc = spec.existing_spc_set_id.filter(|id| *id > 0);
+    match spec.existing_spc_set_id {
+        Some(0) => ctx.error("LC-REF-001", "外部 SPC Set ID 必须为正整数"),
+        Some(id) if spc_is_external => ctx.note_external(
             IdKind::Spc,
             id,
             Some("existing SPC set".into()),
             "nodal-static",
         ),
+        Some(_) => {}
         None => ctx.warn("LC-REF-001", "未提供外部 SPC 集合：模型可能无约束，请确认"),
     }
 
+    let base_ascii = label_override
+        .map(ToString::to_string)
+        .unwrap_or_else(|| ascii_name(&spec.name));
+
     if spec.per_row_subcase {
         for (i, row) in spec.loads.iter().enumerate() {
-            let sid = ctx.allocate(IdKind::Load, &format!("{}#load#{}", spec.name, i));
-            emit_cards(&mut frag, &mut ctx, sid, row);
-            let sc = ctx.allocate(IdKind::Subcase, &format!("{}#sub#{}", spec.name, i));
-            let label = format!("{}_{}", ascii_name(&spec.name), i + 1);
+            let sid = ctx.allocate(IdKind::Load, &format!("{key_prefix}#load#{i}"));
+            let emitted = emit_cards(frag, ctx, sid, row);
+            if !emitted {
+                ctx.error(
+                    "LC-INPUT-001",
+                    format!("第 {} 行载荷全为 0，独立子工况不能缺少载荷卡片", i + 1),
+                );
+            }
+            let sc = ctx.allocate(IdKind::Subcase, &format!("{key_prefix}#sub#{i}"));
+            let label = format!("{base_ascii}_{}", i + 1);
             ctx.metadata("LOADCOLS", sid, format!("LC_{label}"));
             ctx.metadata("LOADSTEPS", sc, format!("LS_{label}"));
             frag.subcases.push(Subcase {
@@ -49,32 +72,41 @@ pub fn generate(spec: &NodalStaticSpec) -> BuiltCase {
                 ..Default::default()
             });
         }
+        None
     } else {
-        let sid = ctx.allocate(IdKind::Load, &format!("{}#load", spec.name));
+        let sid = ctx.allocate(IdKind::Load, &format!("{key_prefix}#load"));
+        let mut any_emitted = false;
         for row in &spec.loads {
-            emit_cards(&mut frag, &mut ctx, sid, row);
+            any_emitted |= emit_cards(frag, ctx, sid, row);
         }
-        let sc = ctx.allocate(IdKind::Subcase, &format!("{}#sub", spec.name));
-        ctx.metadata("LOADCOLS", sid, format!("LC_{}", ascii_name(&spec.name)));
-        ctx.metadata("LOADSTEPS", sc, format!("LS_{}", ascii_name(&spec.name)));
+        if !spec.loads.is_empty() && !any_emitted {
+            ctx.error(
+                "LC-INPUT-001",
+                "节点静力工况所有载荷行均全为 0，无法生成有效 LOAD 卡片",
+            );
+        }
+        let sc = ctx.allocate(IdKind::Subcase, &format!("{key_prefix}#sub"));
+        ctx.metadata("LOADCOLS", sid, format!("LC_{base_ascii}"));
+        ctx.metadata("LOADSTEPS", sc, format!("LS_{base_ascii}"));
         frag.subcases.push(Subcase {
             id: sc,
-            label: spec.name.clone(),
+            label: label_override
+                .map(ToString::to_string)
+                .unwrap_or_else(|| spec.name.clone()),
             analysis: Some("STATICS".into()),
             spc,
             load: Some(sid),
             outputs: static_outputs(&spec.output_profile),
             ..Default::default()
         });
+        Some(sid)
     }
-
-    BuiltCase::new(frag, ctx)
 }
 
-fn emit_cards(frag: &mut DeckFragment, ctx: &mut GenerationContext, sid: u64, row: &NodalLoadRow) {
+fn emit_cards(frag: &mut DeckFragment, ctx: &mut GenerationContext, sid: u64, row: &NodalLoadRow) -> bool {
     if row.node_id == 0 {
         ctx.error("LC-INPUT-001", "节点号必须为正整数");
-        return;
+        return false;
     }
     for (field, value) in [
         ("fx", row.fx),
@@ -120,4 +152,5 @@ fn emit_cards(frag: &mut DeckFragment, ctx: &mut GenerationContext, sid: u64, ro
         Some(row.label.clone()),
         "nodal-static",
     );
+    has_force || has_moment
 }

@@ -11,6 +11,7 @@ use crate::modules::{self, BuiltCase};
 use crate::solvers::optistruct::{write_fem, WriteInput, WriterOptions};
 
 use crate::core::radioss_deck::RadiossBuilt;
+use crate::core::radioss_functions_io::{extract_functions_from_deck, render_functions_csv};
 use crate::core::radioss_spec::{RadiossFopsSpec, RadiossRopsSpec};
 use crate::solvers::radioss::{write_rad, RadiossWriteInput};
 
@@ -103,6 +104,8 @@ pub struct PreviewResult {
     pub kind: String,
     pub diagnostics: Vec<Diagnostic>,
     pub fem_preview: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub functions_csv: Option<String>,
     pub external_references: Vec<ReferenceView>,
     pub id_plan: Vec<IdPlanView>,
     pub summary: PreviewSummary,
@@ -124,6 +127,7 @@ struct Produced {
     external: Vec<ReferenceView>,
     id_plan: Vec<IdPlanView>,
     fem: String,
+    functions_csv: Option<String>,
     files: BTreeMap<String, String>,
     sol: Option<u32>,
     card_counts: BTreeMap<String, usize>,
@@ -141,6 +145,7 @@ fn generate_fragment(spec: &CaseSpec) -> Option<BuiltCase> {
         CaseSpec::TabularLoad(_) => return None,
         CaseSpec::RadiossRops(_) => return None,
         CaseSpec::RadiossFops(_) => return None,
+        CaseSpec::MultiCase(_) => return None,
     })
 }
 
@@ -150,6 +155,10 @@ fn produced_for(request: &CaseRequest) -> Produced {
         .project_name
         .clone()
         .unwrap_or_else(|| request.case.display_name());
+
+    if let CaseSpec::MultiCase(spec) = &request.case {
+        return produced_multi_case(&title, spec);
+    }
 
     if let CaseSpec::RadiossRops(spec) = &request.case {
         return produced_radioss(spec);
@@ -186,6 +195,7 @@ fn produced_for(request: &CaseRequest) -> Produced {
                     external: Vec::new(),
                     id_plan: Vec::new(),
                     fem: built.fem,
+                    functions_csv: None,
                     files,
                     sol: Some(101),
                     card_counts: BTreeMap::new(),
@@ -198,6 +208,7 @@ fn produced_for(request: &CaseRequest) -> Produced {
                 external: Vec::new(),
                 id_plan: Vec::new(),
                 fem: String::new(),
+                functions_csv: None,
                 files: BTreeMap::new(),
                 sol: None,
                 card_counts: BTreeMap::new(),
@@ -278,6 +289,97 @@ fn produced_for(request: &CaseRequest) -> Produced {
             .map(IdPlanView::from)
             .collect(),
         fem,
+        functions_csv: None,
+        files,
+        sol: frag.sol,
+        card_counts,
+        subcase_count,
+    }
+}
+
+fn produced_multi_case(title: &str, spec: &crate::core::case_spec::MultiCaseSpec) -> Produced {
+    let multi = modules::multi_case::generate(spec);
+    let BuiltCase { fragment, ctx } = multi.built;
+    let mut diagnostics = merge_diagnostics(&fragment, &ctx);
+
+    let mut frag: DeckFragment = fragment;
+    frag.external_refs = ctx.external_refs.clone();
+    frag.metadata = ctx.metadata.clone();
+
+    let mut card_counts: BTreeMap<String, usize> = BTreeMap::new();
+    for card in &frag.bulk_cards {
+        *card_counts.entry(card.card_name().to_string()).or_default() += 1;
+    }
+    let subcase_count = frag.subcases.len();
+
+    let mut fem = String::new();
+    let has_errors = diagnostics.iter().any(Diagnostic::is_error);
+    if !has_errors {
+        let opts = WriterOptions::default();
+        match write_fem(
+            &WriteInput {
+                title,
+                solver: &ctx.solver,
+                solver_version: &ctx.solver_version,
+                fragment: &frag,
+            },
+            &opts,
+        ) {
+            Ok(text) => fem = text,
+            Err(d) => diagnostics.push(d),
+        }
+    }
+
+    let mut files = BTreeMap::new();
+    if !fem.is_empty() {
+        files.insert(format!("{title}.fem"), fem.clone());
+        let mut manifest = serde_json::Map::new();
+        manifest.insert("schemaVersion".into(), serde_json::json!(2));
+        manifest.insert("caseKind".into(), serde_json::json!("multi-case"));
+        manifest.insert("solver".into(), serde_json::json!(ctx.solver));
+        manifest.insert(
+            "solverVersion".into(),
+            serde_json::json!(ctx.solver_version),
+        );
+        manifest.insert("modelUnits".into(), serde_json::json!(ctx.model_units));
+        manifest.insert("sol".into(), serde_json::json!(frag.sol));
+        manifest.insert("subcaseCount".into(), serde_json::json!(subcase_count));
+        manifest.insert(
+            "caseCount".into(),
+            serde_json::json!(spec.cases.iter().filter(|c| c.enabled).count()),
+        );
+        manifest.insert(
+            "externalReferences".into(),
+            serde_json::to_value(&ctx.external_refs).unwrap_or(serde_json::Value::Null),
+        );
+        manifest.insert(
+            "generatedIdMap".into(),
+            serde_json::to_value(ctx.allocator.assignments()).unwrap_or(serde_json::Value::Null),
+        );
+        manifest.insert("validationStatus".into(), serde_json::json!("generated"));
+        files.insert(
+            format!("{title}.manifest.json"),
+            serde_json::to_string_pretty(&manifest).unwrap_or_default(),
+        );
+        if !multi.points.is_empty() {
+            if let Ok(points_json) = crate::load_deck::points_to_json(&multi.points) {
+                files.insert(format!("{title}_points.json"), points_json);
+            }
+        }
+    }
+
+    Produced {
+        kind: "multi-case".into(),
+        diagnostics,
+        external: ctx.external_refs.iter().map(ReferenceView::from).collect(),
+        id_plan: ctx
+            .allocator
+            .assignments()
+            .iter()
+            .map(IdPlanView::from)
+            .collect(),
+        fem,
+        functions_csv: None,
         files,
         sol: frag.sol,
         card_counts,
@@ -301,7 +403,9 @@ fn produced_radioss_common(kind: &str, spec: &RadiossRopsSpec, built: RadiossBui
     let mut diagnostics = built.diagnostics.clone();
     let external: Vec<ReferenceView> = built.external.iter().map(ReferenceView::from).collect();
     let id_plan: Vec<IdPlanView> = built.id_plan.iter().map(IdPlanView::from).collect();
-    let stem = modules::radioss_rops::ascii_stem(&spec.run_name);
+    // The generator validates Run Name before files are produced. Preserve it
+    // verbatim so Radioss uses the same root in the filename, /BEGIN and /RUN.
+    let stem = &spec.run_name;
     let filename = format!("{stem}_0000.rad");
 
     let mut fem = String::new();
@@ -321,8 +425,15 @@ fn produced_radioss_common(kind: &str, spec: &RadiossRopsSpec, built: RadiossBui
     }
 
     let mut files = BTreeMap::new();
+    let mut functions_csv: Option<String> = None;
     if !fem.is_empty() {
         files.insert(filename.clone(), fem.clone());
+        let extracted_functs = extract_functions_from_deck(&built.deck);
+        if !extracted_functs.is_empty() {
+            let csv_text = render_functions_csv(&extracted_functs);
+            files.insert(format!("{stem}_functions.csv"), csv_text.clone());
+            functions_csv = Some(csv_text);
+        }
         let mut manifest = serde_json::Map::new();
         manifest.insert("schemaVersion".into(), serde_json::json!(2));
         manifest.insert("caseKind".into(), serde_json::json!(kind));
@@ -361,6 +472,7 @@ fn produced_radioss_common(kind: &str, spec: &RadiossRopsSpec, built: RadiossBui
         external,
         id_plan,
         fem,
+        functions_csv,
         files,
         sol: None,
         card_counts: built.card_counts.clone(),
@@ -415,6 +527,7 @@ pub fn preview_case(request: CaseRequest) -> PreviewResult {
         kind: produced.kind,
         diagnostics: produced.diagnostics,
         fem_preview: produced.fem,
+        functions_csv: produced.functions_csv,
         external_references: produced.external,
         id_plan: produced.id_plan,
         summary: PreviewSummary {
