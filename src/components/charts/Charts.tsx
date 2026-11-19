@@ -78,8 +78,8 @@ export function CurveChart({
   const iw = W - m.left - m.right;
   const ih = H - m.top - m.bottom;
   const clean = points.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
-  const stroke = tone === "amber" ? "#a9701a" : tone === "blue" ? "#3a6ea5" : "#1d7a43";
-  const fill = tone === "amber" ? "rgba(169,112,26,0.12)" : tone === "blue" ? "rgba(58,110,165,0.12)" : "rgba(29,122,67,0.12)";
+  const stroke = tone === "amber" ? "#c2410c" : tone === "blue" ? "#1d4ed8" : "#0e7490";
+  const fill = tone === "amber" ? "rgba(194,65,12,0.10)" : tone === "blue" ? "rgba(29,78,216,0.10)" : "rgba(14,116,144,0.10)";
 
   if (clean.length === 0) {
     return (
@@ -199,7 +199,7 @@ export function SpectrumChart({
           y={m.top}
           width={Math.max(0, sx(band[1]) - sx(band[0]))}
           height={ih}
-          fill="rgba(87,201,130,0.10)"
+          fill="rgba(29,78,216,0.08)"
         />
       )}
       {yt.map((t) => (
@@ -214,9 +214,9 @@ export function SpectrumChart({
           <text x={sx(t)} y={m.top + ih + 16} className="chartTick" textAnchor="middle">{fmt(t)}</text>
         </g>
       ))}
-      <path d={path} fill="none" stroke="#1d7a43" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+      <path d={path} fill="none" stroke="#1d4ed8" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
       {sorted.map((p, i) => (
-        <circle key={"p" + i} cx={sx(p.x)} cy={sy(p.y)} r={3} fill="#fff" stroke="#1d7a43" strokeWidth={1.8}>
+        <circle key={"p" + i} cx={sx(p.x)} cy={sy(p.y)} r={3.2} fill="#fff" stroke="#1d4ed8" strokeWidth={1.8}>
           <title>{`f=${fmt(p.x)} Hz, PSD=${fmt(p.y)}`}</title>
         </circle>
       ))}
@@ -253,9 +253,9 @@ export function DirectionGizmo({
   const toPx = (p: [number, number]): [number, number] => [cx + p[0] * scale, cy + p[1] * scale];
 
   const axes: Array<{ name: string; dir: [number, number, number]; color: string }> = [
-    { name: "X", dir: [1, 0, 0], color: "#b2453b" },
-    { name: "Y", dir: [0, 1, 0], color: "#1d7a43" },
-    { name: "Z", dir: [0, 0, 1], color: "#3a6ea5" },
+    { name: "X", dir: [1, 0, 0], color: "#dc2626" },
+    { name: "Y", dir: [0, 1, 0], color: "#0e8a56" },
+    { name: "Z", dir: [0, 0, 1], color: "#1d4ed8" },
   ];
   const tip = toPx(proj(n[0], n[1], n[2]));
 
@@ -271,11 +271,121 @@ export function DirectionGizmo({
             </g>
           );
         })}
-        <line x1={cx} y1={cy} x2={tip[0]} y2={tip[1]} stroke="#111c15" strokeWidth={2.4} strokeLinecap="round" />
-        <circle cx={tip[0]} cy={tip[1]} r={4} fill="#111c15" />
-        <circle cx={cx} cy={cy} r={3} fill="#fff" stroke="#111c15" strokeWidth={1.5} />
+        <line x1={cx} y1={cy} x2={tip[0]} y2={tip[1]} stroke="#0f172a" strokeWidth={2.5} strokeLinecap="round" />
+        <circle cx={tip[0]} cy={tip[1]} r={4.2} fill="#0f172a" />
+        <circle cx={cx} cy={cy} r={3} fill="#fff" stroke="#0f172a" strokeWidth={1.5} />
       </svg>
       {label && <span className="gizmoLabel">{label}</span>}
+    </div>
+  );
+}
+
+export function GravityVectorGizmo({
+  vectors,
+  selectedIndex,
+  size = 184,
+}: {
+  vectors: Array<{ name: string; vector: [number, number, number] }>;
+  selectedIndex: number;
+  size?: number;
+}) {
+  const C = 0.866;
+  const S = 0.5;
+  const proj = (x: number, y: number, z: number): [number, number] => [
+    (x - y) * C,
+    (x + y) * S - z,
+  ];
+  const scale = size * 0.34;
+  const cx = size / 2;
+  const cy = size / 2 + 4;
+  const toPx = (p: [number, number]): [number, number] => [cx + p[0] * scale, cy + p[1] * scale];
+
+  const axes: Array<{ name: string; dir: [number, number, number]; color: string }> = [
+    { name: "X", dir: [1, 0, 0], color: "#dc2626" },
+    { name: "Y", dir: [0, 1, 0], color: "#0e8a56" },
+    { name: "Z", dir: [0, 0, 1], color: "#1d4ed8" },
+  ];
+
+  const mags = vectors.map((v) => Math.hypot(v.vector[0], v.vector[1], v.vector[2]));
+  const maxMag = Math.max(1e-9, ...mags);
+
+  const scaledEnd = (v: [number, number, number], mag: number): [number, number] => {
+    if (mag <= 0 || !Number.isFinite(mag)) return [cx, cy];
+    const ratio = Math.max(0.28, mag / maxMag);
+    const n: [number, number, number] = [
+      (v[0] / mag) * ratio,
+      (v[1] / mag) * ratio,
+      (v[2] / mag) * ratio,
+    ];
+    return toPx(proj(n[0], n[1], n[2]));
+  };
+
+  const arrowHead = (tip: [number, number]): string | null => {
+    const dx = tip[0] - cx;
+    const dy = tip[1] - cy;
+    const len = Math.hypot(dx, dy);
+    if (len < 6) return null;
+    const ux = dx / len;
+    const uy = dy / len;
+    const px = -uy;
+    const py = ux;
+    const headLen = 9;
+    const headHalf = 4;
+    const bx = tip[0] - ux * headLen;
+    const by = tip[1] - uy * headLen;
+    return `${tip[0].toFixed(1)},${tip[1].toFixed(1)} ${(bx + px * headHalf).toFixed(1)},${(by + py * headHalf).toFixed(1)} ${(bx - px * headHalf).toFixed(1)},${(by - py * headHalf).toFixed(1)}`;
+  };
+
+  const active = vectors[selectedIndex];
+  const activeMag = mags[selectedIndex] ?? 0;
+  const activeTip = active ? scaledEnd(active.vector, activeMag) : ([cx, cy] as [number, number]);
+  const activeHead = active && activeMag > 0 ? arrowHead(activeTip) : null;
+
+  return (
+    <div className="gizmoWrap">
+      <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} role="img" aria-label="重力场 3D 方向矢量">
+        {axes.map((a) => {
+          const pPos = toPx(proj(a.dir[0], a.dir[1], a.dir[2]));
+          const pNeg = toPx(proj(-a.dir[0] * 0.72, -a.dir[1] * 0.72, -a.dir[2] * 0.72));
+          return (
+            <g key={a.name}>
+              <line x1={cx} y1={cy} x2={pNeg[0]} y2={pNeg[1]} stroke={a.color} strokeWidth={1} strokeDasharray="2 3" opacity={0.25} />
+              <line x1={cx} y1={cy} x2={pPos[0]} y2={pPos[1]} stroke={a.color} strokeWidth={1.4} strokeDasharray="3 3" opacity={0.55} />
+              <text x={pPos[0]} y={pPos[1] + 3} fill={a.color} fontSize={10} fontWeight={700} textAnchor="middle">+{a.name}</text>
+            </g>
+          );
+        })}
+
+        {vectors.map((item, i) => {
+          if (i === selectedIndex) return null;
+          const mag = mags[i] ?? 0;
+          if (mag <= 0 || !Number.isFinite(mag)) return null;
+          const tip = scaledEnd(item.vector, mag);
+          return (
+            <g key={i} opacity={0.55}>
+              <line x1={cx} y1={cy} x2={tip[0]} y2={tip[1]} stroke="#64748b" strokeWidth={1.5} strokeDasharray="3 2" strokeLinecap="round" />
+              <circle cx={tip[0]} cy={tip[1]} r={2.6} fill="#64748b" />
+              <text x={tip[0] + 5} y={tip[1] + 3} fill="#64748b" fontSize={9.5} fontWeight={700}>#{i + 1}</text>
+            </g>
+          );
+        })}
+
+        {active && activeMag > 0 && (
+          <g>
+            <line x1={cx} y1={cy} x2={activeTip[0]} y2={activeTip[1]} stroke="#0e7490" strokeWidth={2.8} strokeLinecap="round" />
+            {activeHead ? (
+              <polygon points={activeHead} fill="#0e7490" />
+            ) : (
+              <circle cx={activeTip[0]} cy={activeTip[1]} r={4.2} fill="#0e7490" />
+            )}
+            <text x={activeTip[0] + 6} y={activeTip[1] - 4} fill="#0f172a" fontSize={10} fontWeight={700}>
+              #{selectedIndex + 1}
+            </text>
+          </g>
+        )}
+
+        <circle cx={cx} cy={cy} r={3} fill="#fff" stroke="#0f172a" strokeWidth={1.5} />
+      </svg>
     </div>
   );
 }
@@ -298,37 +408,37 @@ export function RangeBar({
   unit?: string;
 }) {
   const W = 560;
-  const rowH = 26;
-  const H = 20 + segments.length * rowH;
-  const m = { left: 14, right: 14, top: 6 };
+  const rowH = 30;
+  const m = { left: 14, right: 40, top: 12 };
+  const H = m.top + 16 + segments.length * rowH;
   const iw = W - m.left - m.right;
   const lo = Math.min(min, max);
   const hi = Math.max(min, max);
   const sx = (v: number) => m.left + ((v - lo) / (hi - lo || 1)) * iw;
   const ticks = niceTicks(lo, hi, 5);
-  const toneColor: Record<string, string> = { brand: "#1d7a43", amber: "#c08a2a", blue: "#3a6ea5" };
+  const toneColor: Record<string, string> = { brand: "#0e8a56", amber: "#d97706", blue: "#1d4ed8" };
 
   return (
     <svg className="chartSvg" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="量程">
       {ticks.map((t) => (
         <g key={t}>
-          <line x1={sx(t)} x2={sx(t)} y1={m.top} y2={H - 12} className="chartGrid" />
-          <text x={sx(t)} y={H - 2} className="chartTick" textAnchor="middle">{fmt(t)}</text>
+          <line x1={sx(t)} x2={sx(t)} y1={m.top} y2={H - 14} className="chartGrid" />
+          <text x={sx(t)} y={H - 3} className="chartTick" textAnchor="middle">{fmt(t)}</text>
         </g>
       ))}
       {segments.map((seg, i) => {
         const x = Math.min(sx(seg.from), sx(seg.to));
         const w = Math.abs(sx(seg.to) - sx(seg.from));
-        const y = m.top + 6 + i * rowH;
+        const y = m.top + 10 + i * rowH;
         return (
           <g key={seg.label + i}>
             <line x1={m.left} x2={m.left + iw} y1={y + 7} y2={y + 7} className="chartTrack" />
             <rect x={x} y={y} width={Math.max(2, w)} height={14} rx={4} fill={toneColor[seg.tone ?? "brand"]} opacity={0.85} />
-            <text x={m.left} y={y - 1} className="chartSegLabel">{seg.label}</text>
+            <text x={m.left} y={y - 3} className="chartSegLabel">{seg.label}</text>
           </g>
         );
       })}
-      <text x={W - m.right} y={H - 2} className="chartUnit" textAnchor="end">{unit}</text>
+      <text x={W - 6} y={H - 3} className="chartUnit" textAnchor="end">{unit}</text>
     </svg>
   );
 }

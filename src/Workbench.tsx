@@ -1,12 +1,22 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import NumericInput from "@/components/NumericInput";
-import InfoTip from "@/components/InfoTip";
-import ModulePreview from "@/modules/previews/ModulePreview";
-import TabularModule from "@/modules/tabular/TabularModule";
-import { FALLBACK_MODULES, STATUS_LABELS, moduleMeta } from "@/app/moduleRegistry";
-import ModuleGallery from "@/app/ModuleGallery";
 import TitleBar from "@/components/TitleBar";
+import ToolTabBar from "@/components/ToolTabBar";
+import CommandPalette from "@/components/CommandPalette";
+import WorkbenchForms from "@/components/WorkbenchForms";
+import InspectorPane, { type InspectorTab } from "@/components/InspectorPane";
+import ModuleGallery from "@/app/ModuleGallery";
+import MultiCaseWorkspace from "@/modules/multicase/MultiCaseWorkspace";
+import TabularModule from "@/modules/tabular/TabularModule";
+import { FALLBACK_MODULES, MULTI_CASE_DESCRIPTOR, STATUS_LABELS, moduleMeta } from "@/app/moduleRegistry";
+import {
+  INITIAL_DRAFTS,
+  PSD_SAMPLE_POINTS,
+  buildParameters,
+  createInitialDrafts,
+  mergeWithInitialDrafts,
+  type Draft,
+} from "@/lib/caseDrafts";
 import {
   buildCase,
   exportCaseFiles,
@@ -14,925 +24,739 @@ import {
   listCaseModules,
   previewCase,
   readPsdSpectrumFile,
+  readTextFile,
+  saveTextFile,
   writePsdTemplate,
-  type Diagnostic,
   type ModuleDescriptor,
   type PreviewResult,
   type PsdImportResult,
 } from "@/lib/caseApi";
+import "@/lib/tabularWorkspaceStore";
+import { applyTemplateModules, collectTemplateModules } from "@/lib/templateRegistry";
+import {
+  createTemplateDocument,
+  parseTemplateText,
+  serializeTemplateToJson,
+  serializeTemplateToXml,
+} from "@/lib/templateCodec";
+import { DownloadIcon, PlayCheckIcon, ResetIcon, SpinnerIcon, XIcon } from "@/components/Icons";
 
-type Draft = Record<string, any>;
-
-const num = (value: unknown): number => {
-  const n = typeof value === "number" ? value : parseFloat(String(value ?? "").trim());
-  return Number.isFinite(n) ? n : 0;
-};
-const optInt = (value: unknown): number | undefined => {
-  const text = String(value ?? "").trim();
-  if (!text) return undefined;
-  const n = parseInt(text, 10);
-  return Number.isFinite(n) ? n : undefined;
-};
-const parseDofs = (value: unknown): number[] => {
-  const text = String(value ?? "").replace(/\s+/g, "");
-  const out = new Set<number>();
-  text.split(",").filter(Boolean).forEach((token) => {
-    const range = token.match(/^(\d+)-(\d+)$/);
-    if (range) {
-      const a = parseInt(range[1], 10);
-      const b = parseInt(range[2], 10);
-      for (let d = Math.min(a, b); d <= Math.max(a, b); d += 1) out.add(d);
-    } else if (/^[1-6]{2,}$/.test(token)) {
-      // Compact form such as "123" means DOFs 1,2,3 (DOF numbers never exceed 6).
-      for (const ch of token) out.add(parseInt(ch, 10));
-    } else if (/^\d+$/.test(token)) {
-      out.add(parseInt(token, 10));
-    }
-  });
-  return [...out].sort((a, b) => a - b);
-};
-
-const optNum = (value: unknown): number | undefined => {
-  const text = String(value ?? "").trim();
-  if (!text) return undefined;
-  const n = parseFloat(text);
-  return Number.isFinite(n) ? n : undefined;
-};
-const parseIdList = (value: unknown): number[] =>
-  String(value ?? "")
-    .split(/[,\s，、]+/)
-    .filter(Boolean)
-    .map((s) => parseInt(s, 10))
-    .filter((n) => Number.isFinite(n));
-const parseRanges = (value: unknown): Array<[number, number]> =>
-  String(value ?? "")
-    .split(/[;\n]+/)
-    .map((chunk) => chunk.trim())
-    .filter(Boolean)
-    .map((chunk) => {
-      const m = chunk.match(/^(\d+)\s*[-~]\s*(\d+)$/);
-      if (m) return [parseInt(m[1], 10), parseInt(m[2], 10)] as [number, number];
-      const single = parseInt(chunk, 10);
-      return Number.isFinite(single) ? ([single, single] as [number, number]) : null;
-    })
-    .filter((v): v is [number, number] => v !== null);
-
-const RADIOSS_DEFAULTS: Draft = {
-  solverVersion: "2022",
-  inputMass: "kg", inputLength: "mm", inputTime: "ms",
-  workMass: "kg", workLength: "mm", workTime: "ms", confirmModel: false,
-  loadKind: "node", loadNodeId: "1001", loadGrnodId: "",
-  direction: "X",
-  curve: [{ time: "0", value: "0" }, { time: "0.05", value: "40" }, { time: "0.1", value: "40" }],
-  tStart: "", tStop: "", skewId: "",
-  constraints: [{ kind: "nodes", nodeIds: "2001,2002", grnodId: "", dofs: [true, true, true, false, false, false], skewId: "" }],
-  endTime: "0.1", animStart: "0", animInterval: "0.01", thInterval: "0.001",
-  timeStepMode: "natural", timeStepScale: "0.9", timeStepTarget: "0.001", amsPartGroupId: "",
-  gravityEnabled: false, gravityMagnitude: "0", gravityDir: "Z",
-  generatedStart: "800000", occupiedRanges: "",
-};
-
-const INITIAL_DRAFTS: Record<string, Draft> = {
-  "radioss-rops": { ...RADIOSS_DEFAULTS, name: "ROPS_CASE_1", runName: "ROPS_CASE" },
-  "radioss-fops": {
-    ...RADIOSS_DEFAULTS,
-    name: "FOPS_CASE_1", runName: "FOPS_CASE", direction: "Z",
-    loadNodeId: "3001",
-    curve: [{ time: "0", value: "0" }, { time: "0.01", value: "30" }, { time: "0.05", value: "30" }],
-    constraints: [{ kind: "nodes", nodeIds: "4001,4002", grnodId: "", dofs: [true, true, true, true, true, true], skewId: "" }],
-    endTime: "0.05", animInterval: "0.005", thInterval: "0.0005",
-    impact: { dropMassKg: "300", dropHeightMm: "3000", gravityG: "1" },
-  },
-  "nodal-static": {
-    name: "Nodal_Static_1", modelUnits: "N-mm-s", solverVersion: "2022",
-    existingSpcSetId: "900001", outputProfile: "STATIC_BASIC",
-    loads: [{ nodeId: "1001", cid: "0", fx: "", fy: "", fz: "", mx: "", my: "", mz: "", label: "" }],
-  },
-  constraint: {
-    name: "Constraint_1", modelUnits: "N-mm-s", mode: "new",
-    existingSpcSetIds: "", combineWithExisting: false,
-    rows: [{ nodeId: "", dofs: "123", value: "" }],
-  },
-  gravity: {
-    name: "Gravity_Z", modelUnits: "N-mm-s", magnitudeG: "1", direction: ["0", "0", "-1"],
-    cid: "0", existingSpcSetId: "900001", outputProfile: "STATIC_BASIC",
-  },
-  "normal-modes": {
-    name: "Normal_Modes", modelUnits: "N-mm-s", existingSpcSetId: "900001",
-    eigrlMinHz: "0", eigrlMaxHz: "300", numModes: "10", outputProfile: "MODAL_BASIC",
-  },
-  "frequency-response": {
-    name: "Frequency_Response", modelUnits: "N-mm-s", existingSpcSetId: "900001",
-    minHz: "10", maxHz: "200", stepHz: "1", eigrlMinHz: "0", eigrlMaxHz: "300",
-    dampingRatio: "0.02", outputProfile: "MFREQ_BASIC",
-  },
-  "random-psd": {
-    name: "Random_PSD_Z", modelUnits: "N-mm-s", solverVersion: "2022",
-    excKind: "base-acceleration", nodeId: "1001", component: "3", existingSpcSetId: "9001",
-    inputPsdUnit: "g^2/Hz", referenceAmplitudeG: "1", forceDirection: ["1", "0", "0"], referenceForceN: "1",
-    interpolation: "LOG-LOG", outOfRange: "ERROR",
-    points: [{ frequencyHz: "10", psd: "0.003" }, { frequencyHz: "100", psd: "0.006" }, { frequencyHz: "200", psd: "0.003" }],
-    minHz: "10", maxHz: "200", stepHz: "1", modalMinHz: "0", modalMaxHz: "300", modalSolver: "LANCZOS",
-    modalMethod: "LANCZOS", eigraV1: "0", eigraV2: "300", eigraNd: "", eigraMsglvl: "0", eigraAmpffact: "5", eigraNorm: "MASS",
-    excForm: "RLOAD2", freqKind: "FREQ1", freqNf: "10", axisMode: "single",
-    dampingRatio: "0.02", outputProfile: "PSD_AND_RMS", stress: true, displacement: true, acceleration: true, confirmSpc: false,
-  },
-};
-
-/** 标准示例谱（与后端模板一致），用于“载入示例”。 */
-const PSD_SAMPLE_POINTS: Array<{ frequencyHz: string; psd: string }> = [
-  { frequencyHz: "10", psd: "0.003" },
-  { frequencyHz: "20", psd: "0.01" },
-  { frequencyHz: "50", psd: "0.02" },
-  { frequencyHz: "100", psd: "0.006" },
-  { frequencyHz: "200", psd: "0.003" },
-];
-
-function buildRadiossParameters(d: Draft): Record<string, unknown> {
-  const timeStep =
-    d.timeStepMode === "noda-cst"
-      ? { mode: "noda-cst", scale: num(d.timeStepScale), target: num(d.timeStepTarget) }
-      : d.timeStepMode === "ams"
-        ? { mode: "ams", scale: num(d.timeStepScale), target: num(d.timeStepTarget), amsPartGroupId: optInt(d.amsPartGroupId) }
-        : { mode: "natural" };
-  return {
-    name: d.name,
-    runName: d.runName,
-    solverVersion: d.solverVersion,
-    units: {
-      input: { mass: d.inputMass, length: d.inputLength, time: d.inputTime },
-      work: { mass: d.workMass, length: d.workLength, time: d.workTime },
-      confirmedAgainstTargetModel: Boolean(d.confirmModel),
-    },
-    references: {
-      loadTarget:
-        d.loadKind === "grnod"
-          ? { kind: "grnod", grnodId: num(d.loadGrnodId) }
-          : { kind: "node", nodeId: num(d.loadNodeId) },
-      constraints: (d.constraints as Draft[]).map((row) => ({
-        target:
-          row.kind === "grnod"
-            ? { kind: "grnod", grnodId: num(row.grnodId) }
-            : { kind: "nodes", nodeIds: parseIdList(row.nodeIds) },
-        dofs: [0, 1, 2, 3, 4, 5].map((i) => Boolean((row.dofs as boolean[])[i])),
-        skewId: optInt(row.skewId),
-      })),
-    },
-    loading: {
-      direction: d.direction,
-      curve: (d.curve as Draft[]).map((p) => ({ time: num(p.time), value: num(p.value) })),
-      tStart: optNum(d.tStart),
-      tStop: optNum(d.tStop),
-      skewId: optInt(d.skewId),
-    },
-    engine: {
-      endTime: num(d.endTime),
-      animation: { startTime: num(d.animStart), interval: num(d.animInterval) },
-      timeHistoryInterval: num(d.thInterval),
-      timeStep,
-    },
-    gravity: d.gravityEnabled
-      ? { enabled: true, magnitude: num(d.gravityMagnitude), direction: d.gravityDir }
-      : undefined,
-    idPolicy: { generatedStart: num(d.generatedStart), manuallyOccupiedRanges: parseRanges(d.occupiedRanges) },
-  };
+type ToastTone = "success" | "info" | "error";
+interface Toast {
+  id: number;
+  tone: ToastTone;
+  text: string;
 }
 
-function buildParameters(id: string, d: Draft): Record<string, unknown> {
-  switch (id) {
-    case "radioss-rops":
-      return buildRadiossParameters(d);
-    case "radioss-fops":
-      return {
-        base: buildRadiossParameters(d),
-        impact: {
-          dropMassKg: num(d.impact?.dropMassKg),
-          dropHeightMm: num(d.impact?.dropHeightMm),
-          gravityG: num(d.impact?.gravityG) || 1,
-        },
-      };
-    case "nodal-static":
-      return {
-        name: d.name, modelUnits: d.modelUnits, solverVersion: d.solverVersion,
-        existingSpcSetId: optInt(d.existingSpcSetId), outputProfile: d.outputProfile,
-        loads: (d.loads as Draft[]).map((r) => ({
-          nodeId: num(r.nodeId), cid: num(r.cid), fx: num(r.fx), fy: num(r.fy), fz: num(r.fz),
-          mx: num(r.mx), my: num(r.my), mz: num(r.mz), label: r.label || "",
-        })),
-      };
-    case "constraint":
-      return {
-        name: d.name, modelUnits: d.modelUnits, mode: d.mode,
-        combineWithExisting: Boolean(d.combineWithExisting),
-        existingSpcSetIds: String(d.existingSpcSetIds ?? "").split(/[,\s]+/).filter(Boolean).map((s) => parseInt(s, 10)).filter((n) => Number.isFinite(n)),
-        rows: (d.rows as Draft[]).map((r) => ({ nodeId: num(r.nodeId), dofs: parseDofs(r.dofs), value: optInt(r.value) ?? 0, cid: 0 })),
-      };
-    case "gravity":
-      return {
-        name: d.name, modelUnits: d.modelUnits, magnitudeG: num(d.magnitudeG),
-        direction: (d.direction as string[]).map(num), cid: num(d.cid),
-        existingSpcSetId: optInt(d.existingSpcSetId), outputProfile: d.outputProfile,
-      };
-    case "normal-modes":
-      return {
-        name: d.name, modelUnits: d.modelUnits, existingSpcSetId: optInt(d.existingSpcSetId),
-        eigrlMinHz: optInt(d.eigrlMinHz), eigrlMaxHz: optInt(d.eigrlMaxHz), numModes: optInt(d.numModes),
-        outputProfile: d.outputProfile,
-      };
-    case "frequency-response":
-      return {
-        name: d.name, modelUnits: d.modelUnits, existingSpcSetId: num(d.existingSpcSetId),
-        frequencyMinHz: num(d.minHz), frequencyMaxHz: num(d.maxHz), frequencyStepHz: num(d.stepHz),
-        eigrlMinHz: num(d.eigrlMinHz), eigrlMaxHz: num(d.eigrlMaxHz), dampingRatio: num(d.dampingRatio),
-      };
-    case "random-psd": {
-      const baseAccel = d.excKind === "base-acceleration";
-      return {
-        name: d.name, modelUnits: d.modelUnits, solverVersion: d.solverVersion,
-        excitation: baseAccel
-          ? { kind: "base-acceleration", nodeId: num(d.nodeId), component: num(d.component), existingSpcSetId: num(d.existingSpcSetId), inputPsdUnit: d.inputPsdUnit, referenceAmplitudeG: num(d.referenceAmplitudeG) }
-          : { kind: "applied-force", nodeId: num(d.nodeId), cid: 0, direction: (d.forceDirection as string[]).map(num), existingSpcSetId: num(d.existingSpcSetId), inputPsdUnit: d.inputPsdUnit, referenceForceN: num(d.referenceForceN) },
-        spectrum: {
-          interpolation: d.interpolation, outOfRange: d.outOfRange,
-          points: (d.points as Draft[]).map((p) => ({ frequencyHz: num(p.frequencyHz), psd: num(p.psd) })),
-        },
-        frequency: {
-          minHz: num(d.minHz), maxHz: num(d.maxHz), stepHz: num(d.stepHz),
-          kind: d.freqKind ?? "FREQ1",
-          nf: d.freqKind === "FREQ2" ? (optInt(d.freqNf) ?? 10) : undefined,
-        },
-        modal: { minHz: num(d.modalMinHz), maxHz: num(d.modalMaxHz), solver: d.modalMethod === "EIGRA" ? "AMSES" : (d.modalSolver ?? "LANCZOS") },
-        axisMode: d.axisMode ?? "single",
-        excitationForm: d.excForm ?? "RLOAD2",
-        eigra: d.modalMethod === "EIGRA" ? {
-          v1Hz: optNum(d.eigraV1), v2Hz: num(d.eigraV2), nd: optInt(d.eigraNd),
-          msglvl: optInt(d.eigraMsglvl), ampffact: optNum(d.eigraAmpffact), norm: d.eigraNorm || "MASS",
-        } : undefined,
-        damping: { kind: "modal-critical-ratio", ratio: num(d.dampingRatio) },
-        output: { profile: d.outputProfile, h3d: true, stress: Boolean(d.stress), displacement: Boolean(d.displacement), acceleration: Boolean(d.acceleration) },
-        confirmExcitedDofInSpc: Boolean(d.confirmSpc),
-      };
+const DRAFTS_KEY = "loadcreator.drafts.v1";
+const OPEN_TABS_KEY = "loadcreator.openTabs.v1";
+
+function messageOf(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object" && "message" in error) return String((error as { message: unknown }).message);
+  return String(error);
+}
+
+function readHash(): string {
+  const raw = window.location.hash.replace(/^#/, "").trim();
+  return raw || "home";
+}
+
+function readStoredDrafts(): Record<string, Draft> {
+  try {
+    const raw = localStorage.getItem(DRAFTS_KEY);
+    if (!raw) return createInitialDrafts();
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return mergeWithInitialDrafts(parsed as Record<string, Draft>);
     }
-    default:
-      return {};
+  } catch {
+    localStorage.removeItem(DRAFTS_KEY);
   }
+  return createInitialDrafts();
 }
 
-function Field({ label, children, hint, help }: { label: string; children: ReactNode; hint?: string; help?: ReactNode }) {
-  return (
-    <label className="wbField">
-      <span className="wbFieldLabel">
-        {label}
-        {hint && <em>{hint}</em>}
-        {help && <InfoTip text={help} />}
-      </span>
-      {children}
-    </label>
-  );
+function readStoredOpenTabs(initialActive: string): string[] {
+  const list: string[] = [];
+  try {
+    const raw = localStorage.getItem(OPEN_TABS_KEY);
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (typeof item === "string" && item !== "home" && !list.includes(item)) {
+            list.push(item);
+          }
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  if (initialActive !== "home" && !list.includes(initialActive)) {
+    list.push(initialActive);
+  }
+  return list;
 }
 
-function RawInput({ value, onChange, placeholder, mono }: { value: string | number; onChange: (v: string) => void; placeholder?: string; mono?: boolean }) {
-  return <input className={mono ? "wbInput mono" : "wbInput"} value={value} placeholder={placeholder} spellCheck={false} onChange={(e) => onChange(e.target.value)} />;
+function downloadBlob(name: string, content: string, mime = "application/json;charset=utf-8") {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = name;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
-function DiagList({ items }: { items: Diagnostic[] }) {
-  if (items.length === 0) return <p className="wbMuted">无诊断信息。</p>;
-  return (
-    <ul className="wbDiagList">
-      {items.map((d, i) => (
-        <li key={i} className={"wbDiag " + d.severity}>
-          <span className="wbDiagCode">{d.code}</span>
-          <span>{d.message}</span>
-          {d.hint && <small>{d.hint}</small>}
-        </li>
-      ))}
-    </ul>
-  );
+async function writeClipboard(text: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+  } catch {
+    // Fall back to execCommand below.
+  }
+  const field = document.createElement("textarea");
+  field.value = text;
+  field.style.position = "fixed";
+  field.style.opacity = "0";
+  document.body.appendChild(field);
+  field.select();
+  const ok = document.execCommand("copy");
+  field.remove();
+  if (!ok) throw new Error("系统剪贴板不可用");
 }
 
-/** Shared ROPS / FOPS form body. FOPS adds the drop-hammer impact parameter card. */
-function RadiossFields({ draft, patch, fops }: { draft: Draft; patch: (k: string, v: unknown) => void; fops: boolean }) {
-  const impact = (draft.impact ?? {}) as Draft;
-  const setImpact = (key: string, value: string) => patch("impact", { ...impact, [key]: value });
-  return (
-    <>
-      <div className="wbAlert info">
-        {fops
-          ? "FOPS 落锤冲击：受控位移近似（对冲击点施加竖直方向位移曲线），附落锤质量/落差换算冲击能量与速度。不生成落锤实体、/INTER/TYPE7 或 /RBODY；外部节点/组 ID 需在 HyperMesh 中核对。实验性，需 P0 实机验证。"
-          : "Radioss 2022 单文件增量：只输出 /GRNOD/NODE、/FUNCT、/IMPDISP、/BCS 与 Engine 控制；不含 /NODE 与网格。所有外部节点/组 ID 需在 HyperMesh 中核对。当前为实验性（P0 实机导入验证未执行）。"}
-      </div>
-      {fops && (
-        <>
-          <div className="wbSubHead">落锤冲击参数（用于能量/速度换算校核）</div>
-          <div className="wbRow3">
-            <Field label="落锤质量 kg" help="落锤总质量（kg）。与落差、重力一起换算冲击能量 E = m·g·h，仅作工程校核，不写入 deck。">
-              <RawInput value={impact.dropMassKg ?? ""} onChange={(v) => setImpact("dropMassKg", v)} mono />
-            </Field>
-            <Field label="落差 mm" help="落锤自由下落高度（mm）。用于换算冲击速度 v0 = sqrt(2gh)。">
-              <RawInput value={impact.dropHeightMm ?? ""} onChange={(v) => setImpact("dropHeightMm", v)} mono />
-            </Field>
-            <Field label="重力倍数 (g)" help="重力加速度相对标准重力的倍数，默认 1。参与能量/速度换算，不改变 deck 的 /GRAV 设置。">
-              <RawInput value={impact.gravityG ?? "1"} onChange={(v) => setImpact("gravityG", v)} mono />
-            </Field>
-          </div>
-        </>
-      )}
-      <div className="wbRow3">
-        <Field label="工况名"><RawInput value={draft.name} onChange={(v) => patch("name", v)} /></Field>
-        <Field label="ASCII Run Name" hint="4–80 字符" help="用于 .rad 文件名与 /RUN 关键字，只允许 ASCII 字母/数字/下划线/点/连字符，禁止中文与特殊字符。"><RawInput value={draft.runName} onChange={(v) => patch("runName", v)} mono /></Field>
-        <Field label="加载对象" help="选择在已有节点（程序生成单节点组 /GRNOD/NODE）或已有节点组 /GRNOD 上施加落锤位移。">
-          <select className="wbInput" value={draft.loadKind} onChange={(e) => patch("loadKind", e.target.value)}>
-            <option value="node">已有节点（生成单节点组）</option>
-            <option value="grnod">已有节点组 /GRNOD</option>
-          </select>
-        </Field>
-        {draft.loadKind === "grnod" ? (
-          <Field label="已有 GRNOD ID" help="目标模型中已存在的节点组 ID，须自行确认存在。"><RawInput value={draft.loadGrnodId} onChange={(v) => patch("loadGrnodId", v)} mono /></Field>
-        ) : (
-          <Field label="加载 Node ID" help="目标模型中已存在的节点号；程序不会重新定义节点。"><RawInput value={draft.loadNodeId} onChange={(v) => patch("loadNodeId", v)} mono /></Field>
-        )}
-        <Field label="加载方向" help="全局 X / Y / Z 方向。FOPS 落锤冲击通常为竖直 Z。">
-          <select className="wbInput" value={draft.direction} onChange={(e) => patch("direction", e.target.value)}>
-            {["X", "Y", "Z"].map((ax) => <option key={ax} value={ax}>{ax}</option>)}
-          </select>
-        </Field>
-      </div>
-      <div className="wbSubHead">单位（质量 / 长度 / 时间）</div>
-      <div className="wbRow3">
-        <Field label="输入单位 质量" help="源数据单位制中的质量单位，支持 kg/g/t/tonne。"><RawInput value={draft.inputMass} onChange={(v) => patch("inputMass", v)} mono /></Field>
-        <Field label="输入单位 长度"><RawInput value={draft.inputLength} onChange={(v) => patch("inputLength", v)} mono /></Field>
-        <Field label="输入单位 时间"><RawInput value={draft.inputTime} onChange={(v) => patch("inputTime", v)} mono /></Field>
-        <Field label="工作单位 质量" help="求解器工作单位。v1 要求与输入单位完全一致，否则拒绝导出（未做 Engine 换算验证）。"><RawInput value={draft.workMass} onChange={(v) => patch("workMass", v)} mono /></Field>
-        <Field label="工作单位 长度"><RawInput value={draft.workLength} onChange={(v) => patch("workLength", v)} mono /></Field>
-        <Field label="工作单位 时间"><RawInput value={draft.workTime} onChange={(v) => patch("workTime", v)} mono /></Field>
-      </div>
-      <label className="wbCheck warn">
-        <input type="checkbox" checked={Boolean(draft.confirmModel)} onChange={(e) => patch("confirmModel", e.target.checked)} />
-        我确认上述单位与目标 HyperMesh 模型完全一致（v1 要求输入单位 = 工作单位）
-      </label>
-      <div className="wbSubHead">{fops ? "落锤位移曲线 t / u（时间严格递增；负值表示反向）" : "位移曲线 t / u（时间严格递增；负值表示反向，不翻转节点组）"}</div>
-      {(draft.curve as Draft[]).map((p, index) => (
-        <div className="wbRowGrid" key={index}>
-          <Field label="时间" help="曲线横轴时间，需严格递增；末点早于 Tstop 时区间外按末两点斜率线性外推。"><NumericInput value={num(p.time)} onCommit={(v) => { const rows = [...(draft.curve as Draft[])]; rows[index] = { ...rows[index], time: String(v) }; patch("curve", rows); }} /></Field>
-          <Field label="位移"><NumericInput value={num(p.value)} onCommit={(v) => { const rows = [...(draft.curve as Draft[])]; rows[index] = { ...rows[index], value: String(v) }; patch("curve", rows); }} /></Field>
-          <button type="button" className="wbMini danger" onClick={() => patch("curve", (draft.curve as Draft[]).filter((_, i) => i !== index))}>删除</button>
-        </div>
-      ))}
-      <button type="button" className="wbMini" onClick={() => patch("curve", [...(draft.curve as Draft[]), { time: "", value: "" }])}>+ 添加曲线点</button>
-      <div className="wbRow3">
-        <Field label="IMPDISP Tstart（可选）" help="受控位移开始作用时间，留空表示从头开始。"><RawInput value={draft.tStart} onChange={(v) => patch("tStart", v)} mono /></Field>
-        <Field label="IMPDISP Tstop（可选）" help="受控位移停止时间，必须大于 Tstart。"><RawInput value={draft.tStop} onChange={(v) => patch("tStop", v)} mono /></Field>
-        <Field label="加载 Skew ID（0=全局，可选）" help="局部坐标系 ID；0 表示使用全局坐标。"><RawInput value={draft.skewId} onChange={(v) => patch("skewId", v)} mono /></Field>
-      </div>
-      <div className="wbSubHead">Engine 求解控制</div>
-      <div className="wbRow3">
-        <Field label="终止时间 Tstop" help="显式求解总时长；应覆盖整个冲击过程。"><RawInput value={draft.endTime} onChange={(v) => patch("endTime", v)} mono /></Field>
-        <Field label="动画起始 Tstart"><RawInput value={draft.animStart} onChange={(v) => patch("animStart", v)} mono /></Field>
-        <Field label="动画间隔 ΔT"><RawInput value={draft.animInterval} onChange={(v) => patch("animInterval", v)} mono /></Field>
-        <Field label="时程间隔" help="时间历程输出间隔（/TFILE），越小曲线越细但文件越大。"><RawInput value={draft.thInterval} onChange={(v) => patch("thInterval", v)} mono /></Field>
-        <Field label="时间步策略" help="自然时间步最稳；/DT/NODA/CST 质量缩放与 AMS 会提升效率但改变质量分布，需工程确认。">
-          <select className="wbInput" value={draft.timeStepMode} onChange={(e) => patch("timeStepMode", e.target.value)}>
-            <option value="natural">自然时间步</option>
-            <option value="noda-cst">/DT/NODA/CST 质量缩放</option>
-            <option value="ams">AMS（/AMS + /DT/AMS）</option>
-          </select>
-        </Field>
-        {draft.timeStepMode !== "natural" && (
-          <>
-            <Field label="时间步缩放系数"><RawInput value={draft.timeStepScale} onChange={(v) => patch("timeStepScale", v)} mono /></Field>
-            <Field label="目标最小时间步"><RawInput value={draft.timeStepTarget} onChange={(v) => patch("timeStepTarget", v)} mono /></Field>
-          </>
-        )}
-        {draft.timeStepMode === "ams" && (
-          <Field label="AMS part group（空=全模型）"><RawInput value={draft.amsPartGroupId} onChange={(v) => patch("amsPartGroupId", v)} mono /></Field>
-        )}
-      </div>
-      <div className="wbSubHead">约束节点组 / BCS（六自由度固定码）</div>
-      {(draft.constraints as Draft[]).map((row, index) => (
-        <div className="wbRowGrid" key={index}>
-          <Field label="类型">
-            <select className="wbInput" value={row.kind} onChange={(e) => { const rows = [...(draft.constraints as Draft[])]; rows[index] = { ...rows[index], kind: e.target.value }; patch("constraints", rows); }}>
-              <option value="nodes">节点列表（生成新组）</option>
-              <option value="grnod">已有 GRNOD</option>
-            </select>
-          </Field>
-          {row.kind === "grnod" ? (
-            <Field label="GRNOD ID"><RawInput value={row.grnodId} onChange={(v) => { const rows = [...(draft.constraints as Draft[])]; rows[index] = { ...rows[index], grnodId: v }; patch("constraints", rows); }} mono /></Field>
-          ) : (
-            <Field label="Node IDs（逗号分隔）"><RawInput value={row.nodeIds} onChange={(v) => { const rows = [...(draft.constraints as Draft[])]; rows[index] = { ...rows[index], nodeIds: v }; patch("constraints", rows); }} mono /></Field>
-          )}
-          <Field label="Skew ID（0=全局）"><RawInput value={row.skewId} onChange={(v) => { const rows = [...(draft.constraints as Draft[])]; rows[index] = { ...rows[index], skewId: v }; patch("constraints", rows); }} mono /></Field>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            {["TX", "TY", "TZ", "RX", "RY", "RZ"].map((dof, di) => (
-              <label key={dof} className="wbCheck">
-                <input
-                  type="checkbox"
-                  checked={Boolean((row.dofs as boolean[])[di])}
-                  onChange={(e) => {
-                    const rows = [...(draft.constraints as Draft[])];
-                    const dofs = [...((rows[index].dofs as boolean[]) ?? [false, false, false, false, false, false])];
-                    dofs[di] = e.target.checked;
-                    rows[index] = { ...rows[index], dofs };
-                    patch("constraints", rows);
-                  }}
-                />
-                {dof}
-              </label>
-            ))}
-          </div>
-          <button type="button" className="wbMini danger" onClick={() => patch("constraints", (draft.constraints as Draft[]).filter((_, i) => i !== index))}>删除</button>
-        </div>
-      ))}
-      <button type="button" className="wbMini" onClick={() => patch("constraints", [...(draft.constraints as Draft[]), { kind: "nodes", nodeIds: "", grnodId: "", dofs: [true, true, true, false, false, false], skewId: "" }])}>+ 添加约束组</button>
-      <div className="wbSubHead">可选重力 / 生成 ID 策略</div>
-      <div className="wbRow3">
-        <label className="wbCheck">
-          <input type="checkbox" checked={Boolean(draft.gravityEnabled)} onChange={(e) => patch("gravityEnabled", e.target.checked)} /> 启用 /GRAV
-        </label>
-        <Field label="重力加速度（签名，工作单位）"><RawInput value={draft.gravityMagnitude} onChange={(v) => patch("gravityMagnitude", v)} mono /></Field>
-        <Field label="重力方向">
-          <select className="wbInput" value={draft.gravityDir} onChange={(e) => patch("gravityDir", e.target.value)}>
-            {["X", "Y", "Z"].map((ax) => <option key={ax} value={ax}>{ax}</option>)}
-          </select>
-        </Field>
-        <Field label="新实体 ID 起始值" help="程序为本工况自动分配 GRNOD/FUNCT/IMPDISP/BCS 等编号的起始值，各家族自动偏移互不冲突。"><RawInput value={draft.generatedStart} onChange={(v) => patch("generatedStart", v)} mono /></Field>
-        <Field label="已占用 ID 区间" hint="如 800100-800200" help="模型中已使用的 ID 区间（分号分隔多个），生成器会跳过这些区间，避免覆盖。"><RawInput value={draft.occupiedRanges} onChange={(v) => patch("occupiedRanges", v)} mono /></Field>
-      </div>
-    </>
-  );
-}
+const PSD_CSV_TEMPLATE = [
+  "\ufeff# LoadCreator PSD 标准导入模板（UTF-8 CSV）",
+  "# 第一列：频率 (Hz)，须严格递增；第二列：功率谱密度 PSD (如 g^2/Hz)",
+  "频率(Hz),PSD(g^2/Hz)",
+  "10,0.003",
+  "20,0.01",
+  "50,0.02",
+  "100,0.006",
+  "200,0.003",
+].join("\n");
 
 export default function Workbench() {
   const [modules, setModules] = useState<ModuleDescriptor[]>(FALLBACK_MODULES);
-  const [activeId, setActiveId] = useState<string>(() => {
-    const hash = typeof window !== "undefined" ? window.location.hash.replace(/^#/, "") : "";
-    return hash || "home";
-  });
-  const [projectName, setProjectName] = useState("LoadCreator_Project");
-  const [drafts, setDrafts] = useState<Record<string, Draft>>(() => JSON.parse(JSON.stringify(INITIAL_DRAFTS)));
-  const [preview, setPreview] = useState<PreviewResult | null>(null);
+  const [activeId, setActiveId] = useState<string>(readHash);
+  const [openIds, setOpenIds] = useState<string[]>(() => readStoredOpenTabs(readHash()));
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  const [drafts, setDrafts] = useState<Record<string, Draft>>(readStoredDrafts);
+  const [previewsById, setPreviewsById] = useState<Record<string, PreviewResult | null>>({});
+  const [staleById, setStaleById] = useState<Record<string, boolean>>({});
+  const [inspectorTabById, setInspectorTabById] = useState<Record<string, InspectorTab>>({});
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [status, setStatus] = useState("");
-  const [psdImport, setPsdImport] = useState<PsdImportResult | null>(null);
+  const [templateBusy, setTemplateBusy] = useState(false);
   const [psdBusy, setPsdBusy] = useState(false);
+  const [psdImport, setPsdImport] = useState<PsdImportResult | null>(null);
+  const [gravityRowIndex, setGravityRowIndex] = useState(0);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const templateFileInputRef = useRef<HTMLInputElement>(null);
+
+  const pushToast = useCallback((tone: ToastTone, text: string) => {
+    const id = Date.now() + Math.random();
+    setToasts((list) => [...list.slice(-3), { id, tone, text }]);
+    window.setTimeout(() => {
+      setToasts((list) => list.filter((item) => item.id !== id));
+    }, 4200);
+  }, []);
 
   useEffect(() => {
     if (!isDesktop()) return;
-    listCaseModules().then(setModules).catch(() => setModules(FALLBACK_MODULES));
+    const fallbackOrder = new Map(FALLBACK_MODULES.map((m, idx) => [m.id, idx]));
+    listCaseModules()
+      .then((list) => {
+        if (!Array.isArray(list) || list.length === 0) return;
+        const merged = list.map((item) => {
+          const fb = FALLBACK_MODULES.find((m) => m.id === item.id);
+          return fb ? { ...item, capabilityFlags: fb.capabilityFlags } : item;
+        });
+        merged.sort((a, b) => (fallbackOrder.get(a.id) ?? 999) - (fallbackOrder.get(b.id) ?? 999));
+        setModules(merged);
+      })
+      .catch(() => {});
   }, []);
 
-  const active = useMemo(() => modules.find((m) => m.id === activeId) ?? modules[0], [modules, activeId]);
-  const draft = drafts[activeId] ?? {};
-  const patch = useCallback((key: string, value: unknown) => {
-    setDrafts((current) => ({ ...current, [activeId]: { ...(current[activeId] ?? {}), [key]: value } }));
-    setPreview(null);
+  useEffect(() => {
+    const onHash = () => {
+      const next = readHash();
+      setActiveId(next);
+      if (next !== "home") {
+        setOpenIds((prev) => (prev.includes(next) ? prev : [...prev, next]));
+      }
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
+      } catch {
+        /* ignore */
+      }
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [drafts]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(OPEN_TABS_KEY, JSON.stringify(openIds));
+    } catch {
+      /* ignore */
+    }
+  }, [openIds]);
+
+  const selectModule = useCallback((id: string) => {
+    window.location.hash = id === "home" ? "" : id;
+    setActiveId(id);
+    if (id !== "home") {
+      setOpenIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    }
+  }, []);
+
+  const closeTab = useCallback((id: string) => {
+    setOpenIds((prev) => {
+      const idx = prev.indexOf(id);
+      if (idx === -1) return prev;
+      const next = prev.filter((item) => item !== id);
+      if (activeId === id) {
+        const fallback = next[idx - 1] ?? next[idx] ?? "home";
+        window.location.hash = fallback === "home" ? "" : fallback;
+        setActiveId(fallback);
+      }
+      return next;
+    });
   }, [activeId]);
 
-  const selectModule = (id: string) => {
-    setActiveId(id);
-    setPreview(null);
-    setError("");
-    setStatus("");
-    setPsdImport(null);
-  };
+  const closeOtherTabs = useCallback((keepId?: string) => {
+    if (keepId) {
+      setOpenIds((prev) => (prev.includes(keepId) ? [keepId] : []));
+    } else {
+      setOpenIds([]);
+      if (activeId !== "home") {
+        window.location.hash = "";
+        setActiveId("home");
+      }
+    }
+  }, [activeId]);
 
-  const caseName = useMemo(() => {
-    const raw = String(draft.name ?? "").trim();
-    return raw || active?.title || "CASE";
-  }, [draft.name, active?.title]);
-
-  const request = useMemo(
-    () => ({ projectName: caseName, case: { kind: activeId, parameters: buildParameters(activeId, draft) } }),
-    [caseName, activeId, draft],
+  const active = useMemo(
+    () =>
+      activeId === "multi-case"
+        ? MULTI_CASE_DESCRIPTOR
+        : modules.find((m) => m.id === activeId),
+    [modules, activeId],
+  );
+  const resolvedId = activeId === "home" || activeId === "multi-case" || active ? activeId : "home";
+  const isParametric = resolvedId !== "home" && resolvedId !== "tabular-load" && resolvedId !== "multi-case";
+  const draft: Draft = isParametric ? drafts[resolvedId] ?? {} : {};
+  const preview = isParametric ? previewsById[resolvedId] ?? null : null;
+  const previewStale = isParametric ? Boolean(staleById[resolvedId]) : false;
+  const inspectorTab: InspectorTab = isParametric ? inspectorTabById[resolvedId] ?? "visual" : "visual";
+  const validOpenIds = useMemo(
+    () => openIds.filter((id) => id === "multi-case" || modules.some((m) => m.id === id)),
+    [openIds, modules],
   );
 
-  async function runPreview() {
-    if (!isDesktop()) { setError("生成由 Rust 桌面端完成，请使用 npm run tauri:dev 或已安装程序运行。"); return; }
-    setBusy(true); setError(""); setStatus("");
-    try {
-      const result = await previewCase(request);
-      setPreview(result);
-      setStatus(result.summary.canExport ? "校验通过，可导出增量文件" : "存在阻止导出的错误");
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
+  const setActiveInspectorTab = useCallback((tab: InspectorTab) => {
+    if (!isParametric) return;
+    setInspectorTabById((prev) => ({ ...prev, [resolvedId]: tab }));
+  }, [isParametric, resolvedId]);
 
-  async function runExport() {
-    if (!isDesktop()) { setError("导出需要桌面端。"); return; }
-    setBusy(true); setError("");
-    try {
-      const built = await buildCase(request);
-      const entries = Object.entries(built.files);
-      if (entries.length === 0) { setError("没有可导出的文件，请先修复错误。"); return; }
-      const directory = await openDialog({ directory: true, multiple: false, title: "选择导出目录" });
-      if (!directory || Array.isArray(directory)) return;
-      const written = await exportCaseFiles(directory, caseName, built.files);
-      setStatus("已导出 " + written.length + " 个文件：" + written.map((p) => p.split(/[\\/]/).pop()).join("、"));
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
+  const patch = useCallback((key: string, value: unknown) => {
+    if (!isParametric) return;
+    setDrafts((prev) => ({ ...prev, [resolvedId]: { ...(prev[resolvedId] ?? {}), [key]: value } }));
+    if (previewsById[resolvedId]) {
+      setStaleById((prev) => ({ ...prev, [resolvedId]: true }));
     }
-  }
+  }, [isParametric, resolvedId, previewsById]);
 
-  async function importPsdSpectrum() {
-    if (!isDesktop()) { setError("谱文件导入由 Rust 桌面端完成，请使用 npm run tauri:dev 或已安装程序运行。"); return; }
+  const resetActiveDraft = useCallback(() => {
+    if (!isParametric || !INITIAL_DRAFTS[resolvedId]) return;
+    setDrafts((prev) => ({
+      ...prev,
+      [resolvedId]: JSON.parse(JSON.stringify(INITIAL_DRAFTS[resolvedId])) as Draft,
+    }));
+    setPreviewsById((prev) => ({ ...prev, [resolvedId]: null }));
+    setStaleById((prev) => ({ ...prev, [resolvedId]: false }));
+    setInspectorTabById((prev) => ({ ...prev, [resolvedId]: "visual" }));
+    if (resolvedId === "random-psd") setPsdImport(null);
+    if (resolvedId === "gravity") setGravityRowIndex(0);
+    pushToast("info", `已恢复「${active?.title ?? resolvedId}」默认参数`);
+  }, [isParametric, resolvedId, active?.title, pushToast]);
+
+  const runPreview = useCallback(async (): Promise<PreviewResult | null> => {
+    if (!isParametric) return null;
+    if (!isDesktop()) {
+      pushToast("error", "求解器校验与生成由 Rust 桌面端完成，请使用 npm run tauri:dev 或桌面程序运行。");
+      return null;
+    }
+    setBusy(true);
     try {
-      const picked = await openDialog({
-        multiple: false,
-        title: "选择 PSD 谱文件（CSV / TXT / XLSX）",
-        filters: [{ name: "谱表文件", extensions: ["csv", "txt", "xlsx", "xls", "tsv"] }],
+      const res = await previewCase({
+        projectName: String(draft.name || resolvedId),
+        case: { kind: resolvedId, parameters: buildParameters(resolvedId, draft) },
       });
-      if (!picked || Array.isArray(picked)) return;
-      setPsdBusy(true); setError(""); setStatus("");
-      const result = await readPsdSpectrumFile(picked);
-      if (result.points.length === 0) { setError("文件中未识别到有效谱点，请检查格式或表头。"); return; }
-      patch("points", result.points.map((p) => ({ frequencyHz: String(p.frequencyHz), psd: String(p.psd) })));
-      if (result.interpolationGuess) patch("interpolation", result.interpolationGuess);
-      setPsdImport(result);
-      setStatus("已从 " + picked.split(/[\\/]/).pop() + " 导入 " + result.points.length + " 个谱点，请核对后预览。");
+      setPreviewsById((prev) => ({ ...prev, [resolvedId]: res }));
+      setStaleById((prev) => ({ ...prev, [resolvedId]: false }));
+      if (!res.summary.canExport) {
+        setInspectorTabById((prev) => ({ ...prev, [resolvedId]: "audit" }));
+        const errCount = res.diagnostics.filter((d) => d.severity === "error").length;
+        pushToast("error", `校验未通过：${errCount} 项错误阻止导出`);
+      } else {
+        if (inspectorTab === "visual") {
+          setInspectorTabById((prev) => ({ ...prev, [resolvedId]: "deck" }));
+        }
+        const warnCount = res.diagnostics.filter((d) => d.severity === "warning").length;
+        pushToast(
+          "success",
+          `校验通过 · ${res.summary.lineCount} 行${warnCount ? `（${warnCount} 项警告）` : ""}`,
+        );
+      }
+      return res;
     } catch (e) {
-      setError(String(e));
+      pushToast("error", "预览生成失败：" + messageOf(e));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }, [isParametric, resolvedId, draft, inspectorTab, pushToast]);
+
+  const runExport = useCallback(async () => {
+    if (!isParametric) return;
+    if (!isDesktop()) {
+      pushToast("error", "导出增量文件由 Rust 桌面端完成，请在 Tauri 应用中运行。");
+      return;
+    }
+    setBusy(true);
+    try {
+      const request = {
+        projectName: String(draft.name || resolvedId),
+        case: { kind: resolvedId, parameters: buildParameters(resolvedId, draft) },
+      };
+      if (!preview || previewStale) {
+        const fresh = await previewCase(request);
+        setPreviewsById((prev) => ({ ...prev, [resolvedId]: fresh }));
+        setStaleById((prev) => ({ ...prev, [resolvedId]: false }));
+        if (!fresh.summary.canExport) {
+          setInspectorTabById((prev) => ({ ...prev, [resolvedId]: "audit" }));
+          pushToast("error", "参数校验未通过，请先修复诊断错误后导出");
+          return;
+        }
+      }
+      const built = await buildCase(request);
+      const hasErr = built.diagnostics.some((d) => d.severity === "error");
+      if (hasErr || Object.keys(built.files).length === 0) {
+        setInspectorTabById((prev) => ({ ...prev, [resolvedId]: "audit" }));
+        pushToast("error", "存在阻止导出的错误，请检查诊断与台账");
+        return;
+      }
+      const dir = await openDialog({
+        directory: true,
+        multiple: false,
+        title: "选择增量文件导出目录",
+      });
+      if (!dir) return;
+      const written = await exportCaseFiles(dir, String(draft.name || resolvedId), built.files);
+      pushToast("success", `已导出 ${written.length} 个文件至 ${dir}`);
+    } catch (e) {
+      pushToast("error", "导出失败：" + messageOf(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [isParametric, resolvedId, draft, preview, previewStale, pushToast]);
+
+  const importPsdSpectrum = useCallback(async () => {
+    if (!isDesktop()) {
+      pushToast("error", "PSD 谱文件导入需由桌面端读取文件，请在 Tauri 应用中运行。");
+      return;
+    }
+    setPsdBusy(true);
+    try {
+      const path = await openDialog({
+        multiple: false,
+        title: "导入 PSD 谱表（CSV / TXT / XLSX）",
+        filters: [
+          { name: "PSD 谱表", extensions: ["csv", "txt", "tsv", "dat", "xlsx", "xls", "xlsm", "ods"] },
+          { name: "所有文件", extensions: ["*"] },
+        ],
+      });
+      if (!path || Array.isArray(path)) return;
+      const res = await readPsdSpectrumFile(path);
+      const nextPoints = res.points.map((p) => ({
+        frequencyHz: String(p.frequencyHz),
+        psd: String(p.psd),
+      }));
+      setDrafts((prev) => {
+        const cur = prev["random-psd"] ?? {};
+        return {
+          ...prev,
+          "random-psd": {
+            ...cur,
+            points: nextPoints,
+            ...(res.interpolationGuess ? { interpolation: res.interpolationGuess } : {}),
+          },
+        };
+      });
+      setPsdImport(res);
+      if (previewsById["random-psd"]) {
+        setStaleById((prev) => ({ ...prev, "random-psd": true }));
+      }
+      pushToast("success", `已导入 ${res.points.length} 个 PSD 谱点`);
+    } catch (e) {
+      pushToast("error", "导入 PSD 谱失败：" + messageOf(e));
     } finally {
       setPsdBusy(false);
     }
-  }
+  }, [previewsById, pushToast]);
 
-  async function downloadPsdTemplate(format: "csv" | "xlsx") {
-    const fileName = format === "xlsx" ? "PSD谱_标准模板.xlsx" : "PSD谱_标准模板.csv";
-    try {
-      if (isDesktop()) {
-        const picked = await saveDialog({
-          title: "保存 PSD 谱标准模板",
-          defaultPath: fileName,
-          filters: [{ name: format === "xlsx" ? "Excel 工作簿" : "CSV 文件", extensions: [format] }],
-        });
-        if (!picked) return;
-        const savedPath = await writePsdTemplate(picked, format);
-        setStatus("模板已保存：" + savedPath);
+  const downloadPsdTemplate = useCallback(async (format: "csv" | "xlsx") => {
+    const defaultName = format === "xlsx" ? "PSD_谱表模板.xlsx" : "PSD_谱表模板.csv";
+    if (!isDesktop()) {
+      if (format === "csv") {
+        downloadBlob(defaultName, PSD_CSV_TEMPLATE, "text/csv;charset=utf-8");
+        pushToast("success", "已下载标准 CSV 模板");
       } else {
-        const csv = "\ufeff# PSD 随机振动输入谱 · 标准模板\n# 频率必须为正且严格递增；对数插值(LOG-LOG)下 PSD 必须大于 0。\n频率Hz,PSD(g^2/Hz)\n10,0.003\n20,0.01\n50,0.02\n100,0.006\n200,0.003\n";
-        const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = fileName;
-        anchor.click();
-        URL.revokeObjectURL(url);
+        pushToast("error", "Excel (.xlsx) 模板生成需由桌面端执行，可先下载 CSV 模板。");
       }
-    } catch (e) {
-      setError(String(e));
+      return;
     }
-  }
+    try {
+      const path = await saveDialog({
+        defaultPath: defaultName,
+        filters:
+          format === "xlsx"
+            ? [{ name: "Excel 工作簿", extensions: ["xlsx"] }]
+            : [{ name: "CSV 文本", extensions: ["csv"] }],
+      });
+      if (!path) return;
+      const written = await writePsdTemplate(path, format);
+      pushToast("success", `已保存标准模板：${written}`);
+    } catch (e) {
+      pushToast("error", "保存模板失败：" + messageOf(e));
+    }
+  }, [pushToast]);
 
-  function loadPsdSample() {
-    patch("points", PSD_SAMPLE_POINTS.map((p) => ({ ...p })));
-    patch("interpolation", "LOG-LOG");
+  const loadPsdSample = useCallback(() => {
+    setDrafts((prev) => ({
+      ...prev,
+      "random-psd": {
+        ...(prev["random-psd"] ?? {}),
+        points: PSD_SAMPLE_POINTS.map((p) => ({ ...p })),
+      },
+    }));
     setPsdImport(null);
-    setStatus("已载入标准示例谱表（LOG-LOG）。");
-  }
+    if (previewsById["random-psd"]) {
+      setStaleById((prev) => ({ ...prev, "random-psd": true }));
+    }
+    pushToast("info", `已载入标准 PSD 示例谱（${PSD_SAMPLE_POINTS.length} 点）`);
+  }, [previewsById, pushToast]);
 
-  const isRadioss = activeId === "radioss-rops" || activeId === "radioss-fops";
+  const handleCopyText = useCallback(async (text: string, label: string) => {
+    try {
+      await writeClipboard(text);
+      pushToast("success", `${label}已复制到剪贴板`);
+    } catch (e) {
+      pushToast("error", "复制失败：" + messageOf(e));
+    }
+  }, [pushToast]);
 
-  const atHome = activeId === "home";
-  // Modules that manage their own page layout (the tabular workspace has its own
-  // stepper and full-width table) opt out of the per-module sidebar.
-  const selfContained = activeId === "tabular-load";
-  const showSidebar = !atHome && !selfContained;
+  const applyImportedTemplateText = useCallback((rawText: string) => {
+    const doc = parseTemplateText(rawText);
+    const { nextParametricDrafts, appliedIds, unknownIds } = applyTemplateModules(
+      doc.modules,
+      drafts,
+      modules.map((m) => m.id),
+    );
+    if (appliedIds.length === 0 && unknownIds.length === 0) {
+      pushToast("error", "模板中未包含任何有效的模块配置");
+      return;
+    }
+    setDrafts(nextParametricDrafts);
+    try {
+      localStorage.setItem(DRAFTS_KEY, JSON.stringify(nextParametricDrafts));
+    } catch {
+      /* ignore */
+    }
+    setPreviewsById({});
+    setStaleById({});
+    setPsdImport(null);
+    const extra = unknownIds.length > 0 ? `（另有 ${unknownIds.length} 个扩展模块配置已保留）` : "";
+    pushToast("success", `已导入模板：恢复 ${appliedIds.length} 个模块填写值与选择项${extra}`);
+  }, [drafts, modules, pushToast]);
+
+  const exportTemplate = useCallback(async () => {
+    setTemplateBusy(true);
+    try {
+      const snapshot = collectTemplateModules(drafts, modules.map((m) => m.id));
+      const moduleCount = Object.keys(snapshot).length;
+      const doc = createTemplateDocument(snapshot);
+      const today = new Date().toISOString().slice(0, 10);
+      const defaultName = `LoadCreator_模板_${today}.xml`;
+
+      if (!isDesktop()) {
+        downloadBlob(defaultName, serializeTemplateToXml(doc), "application/xml;charset=utf-8");
+        pushToast("success", `已导出 XML 模板（包含 ${moduleCount} 个模块配置）`);
+        return;
+      }
+
+      const path = await saveDialog({
+        title: "导出全局参数模板（记录所有模块填写值与选择项）",
+        defaultPath: defaultName,
+        filters: [
+          { name: "LoadCreator XML 模板", extensions: ["xml"] },
+          { name: "LoadCreator JSON 模板", extensions: ["json"] },
+        ],
+      });
+      if (!path) return;
+
+      const isJson = path.toLowerCase().endsWith(".json");
+      const content = isJson ? serializeTemplateToJson(doc) : serializeTemplateToXml(doc);
+      const written = await saveTextFile(path, content);
+      pushToast("success", `已导出${isJson ? " JSON " : " XML "}模板（${moduleCount} 个模块）：${written}`);
+    } catch (e) {
+      pushToast("error", "导出模板失败：" + messageOf(e));
+    } finally {
+      setTemplateBusy(false);
+    }
+  }, [drafts, modules, pushToast]);
+
+  const importTemplate = useCallback(async () => {
+    if (!isDesktop()) {
+      templateFileInputRef.current?.click();
+      return;
+    }
+    setTemplateBusy(true);
+    try {
+      const path = await openDialog({
+        multiple: false,
+        title: "导入全局参数模板（XML / JSON）",
+        filters: [
+          { name: "LoadCreator 模板", extensions: ["xml", "json"] },
+          { name: "所有文件", extensions: ["*"] },
+        ],
+      });
+      if (!path || Array.isArray(path)) return;
+      const rawText = await readTextFile(path);
+      applyImportedTemplateText(rawText);
+    } catch (e) {
+      pushToast("error", "导入模板失败：" + messageOf(e));
+    } finally {
+      setTemplateBusy(false);
+    }
+  }, [applyImportedTemplateText, pushToast]);
+
+  const handleWebTemplateFileChange = useCallback(async (file: File | undefined) => {
+    if (!file) return;
+    setTemplateBusy(true);
+    try {
+      const rawText = await file.text();
+      applyImportedTemplateText(rawText);
+    } catch (e) {
+      pushToast("error", "导入模板失败：" + messageOf(e));
+    } finally {
+      setTemplateBusy(false);
+    }
+  }, [applyImportedTemplateText, pushToast]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && isParametric && !paletteOpen) {
+        e.preventDefault();
+        void runPreview();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isParametric, paletteOpen, runPreview]);
+
+  const meta = active ? moduleMeta(active.id) : null;
+  const canExport = Boolean(preview?.summary.canExport);
 
   return (
-    <div className={"wbShell" + (showSidebar ? "" : " noSidebar")}>
-      <TitleBar />
-      {showSidebar && (
-        <aside className="wbSidebar">
-          <div className="wbBrand">
-            <span className="wbBrandMark">LC</span>
-            <div><b>LoadCreator 2.0</b><small>CAE 工况工具箱</small></div>
-          </div>
+    <div className="appShell">
+      <TitleBar
+        activeId={resolvedId}
+        activeModule={active}
+        templateBusy={templateBusy}
+        onOpenHome={() => selectModule("home")}
+        onOpenPalette={() => setPaletteOpen(true)}
+        onImportTemplate={() => void importTemplate()}
+        onExportTemplate={() => void exportTemplate()}
+      />
 
-          <button type="button" className="wbBackHome" onClick={() => selectModule("home")}>
-            <span aria-hidden="true">←</span> 模块库
-          </button>
+      <input
+        ref={templateFileInputRef}
+        type="file"
+        accept=".xml,.json"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          void handleWebTemplateFileChange(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
 
-          <div className="wbModuleHead">
-            <span className="wbModuleIcon">{moduleMeta(activeId).icon}</span>
-            <div className="wbModuleMeta">
-              <b>{active?.title}</b>
-              <span className={"wbBadge " + (active?.status ?? "")}>{STATUS_LABELS[active?.status ?? ""] ?? active?.status}</span>
-            </div>
-          </div>
-          <p className="wbModuleDesc">{moduleMeta(activeId).description}</p>
+      <ToolTabBar
+        modules={modules}
+        openIds={validOpenIds}
+        activeId={resolvedId}
+        previewsById={previewsById}
+        staleById={staleById}
+        onSelectHome={() => selectModule("home")}
+        onSelectTab={selectModule}
+        onCloseTab={closeTab}
+        onCloseOthers={closeOtherTabs}
+        onOpenLauncher={() => setPaletteOpen(true)}
+      />
 
-          <nav className="wbNav">
-            <span className="wbNavGroupLabel">本模块能力</span>
-            {active?.capabilityFlags.map((flag) => (
-              <span key={flag} className="wbNavFlag">{flag}</span>
-            ))}
-          </nav>
-
-          <div className="wbSidebarFoot">
-            <span>求解器 · {active?.solver === "radioss" ? "Radioss 2022" : "OptiStruct " + (active?.minSupportedVersion ?? "")}</span>
-            <small>{active?.solver === "radioss" ? "单文件 .rad · 离线运行" : "增量 FEM · 离线运行"}</small>
-          </div>
-        </aside>
-      )}
-
-      <main className="wbMain">
-        {activeId === "home" ? (
-          <ModuleGallery modules={modules} onOpen={selectModule} />
-        ) : activeId === "tabular-load" ? (
-          <TabularModule projectName={projectName} onProjectChange={setProjectName} onBack={() => selectModule("home")} />
-        ) : (
-          <>
-        <header className="wbHeader">
-          <div>
-            <p className="wbEyebrow">CASE WORKBENCH</p>
-            <h1>{active?.title}</h1>
-          </div>
-          <div className="wbHeaderMeta">
-            <span className="wbChip">{active?.solver === "radioss" ? "Radioss 单文件 .rad" : "SOL 增量"}</span>
-            <span className="wbChip muted">{active?.capabilityFlags.join(" · ")}</span>
-          </div>
-        </header>
-
-        {error && <div className="wbAlert error">{error}</div>}
-        {status && <div className="wbAlert info">{status}</div>}
-
-        <section className="wbGrid">
-          <div className="wbFormPanel">
-            <div className="wbPanelHead"><h2>参数</h2><span>外部实体 ID 需自行确认存在于目标模型 · 悬停 ? 查看说明</span></div>
-
-            {isRadioss && <RadiossFields draft={draft} patch={patch} fops={activeId === "radioss-fops"} />}
-
-            {activeId === "nodal-static" && (
-              <>
-                <div className="wbRow3">
-                  <Field label="工况名"><RawInput value={draft.name} onChange={(v) => patch("name", v)} /></Field>
-                  <Field label="模型单位" help="OptiStruct 模型单位制，如 N-mm-s。"><RawInput value={draft.modelUnits} onChange={(v) => patch("modelUnits", v)} mono /></Field>
-                  <Field label="外部 SPC Set ID" hint="留空=无约束" help="目标模型中已存在的约束集合 ID；本模块仅引用，不重新定义。"><RawInput value={draft.existingSpcSetId} onChange={(v) => patch("existingSpcSetId", v)} mono /></Field>
-                </div>
-                <div className="wbSubHead">节点载荷</div>
-                {(draft.loads as Draft[]).map((row, index) => (
-                  <div className="wbRowGrid" key={index}>
-                    {(["nodeId", "fx", "fy", "fz", "mx", "my", "mz"] as const).map((key) => (
-                      <Field key={key} label={key === "nodeId" ? "Node" : key.toUpperCase()} help={key === "nodeId" ? "目标模型已有节点号。" : undefined}>
-                        <RawInput value={row[key]} onChange={(v) => { const loads = [...(draft.loads as Draft[])]; loads[index] = { ...loads[index], [key]: v }; patch("loads", loads); }} mono />
-                      </Field>
-                    ))}
-                    <button type="button" className="wbMini danger" onClick={() => { const loads = (draft.loads as Draft[]).filter((_, i) => i !== index); patch("loads", loads.length ? loads : [{ nodeId: "", cid: "0", fx: "", fy: "", fz: "", mx: "", my: "", mz: "", label: "" }]); }}>删除</button>
-                  </div>
-                ))}
-                <button type="button" className="wbMini" onClick={() => patch("loads", [...(draft.loads as Draft[]), { nodeId: "", cid: "0", fx: "", fy: "", fz: "", mx: "", my: "", mz: "", label: "" }])}>+ 添加节点载荷</button>
-              </>
-            )}
-
-            {activeId === "gravity" && (
-              <>
-                <div className="wbRow3">
-                  <Field label="工况名"><RawInput value={draft.name} onChange={(v) => patch("name", v)} /></Field>
-                  <Field label="幅值 (g)" help="以标准重力 g 为单位的幅值，程序按模型单位换算（N-mm-s 约 9806.65 mm/s2）。"><RawInput value={draft.magnitudeG} onChange={(v) => patch("magnitudeG", v)} mono /></Field>
-                  <Field label="外部 SPC Set ID"><RawInput value={draft.existingSpcSetId} onChange={(v) => patch("existingSpcSetId", v)} mono /></Field>
-                </div>
-                <div className="wbRow3">
-                  {["X", "Y", "Z"].map((axis, i) => (
-                    <Field key={axis} label={"方向 " + axis} help={i === 0 ? "重力方向矢量（三分量），分量大小不参与归一化，方向为准。" : undefined}>
-                      <RawInput value={(draft.direction as string[])[i]} onChange={(v) => { const dir = [...(draft.direction as string[])]; dir[i] = v; patch("direction", dir); }} mono />
-                    </Field>
-                  ))}
-                </div>
-                <p className="wbHint">1g 会按模型单位换算（N-mm-s 约 9806.65 mm/s2），不会写入求解器默认单位。</p>
-              </>
-            )}
-
-            {activeId === "constraint" && (
-              <>
-                <div className="wbRow3">
-                  <Field label="工况名"><RawInput value={draft.name} onChange={(v) => patch("name", v)} /></Field>
-                  <Field label="模式" help="新建 SPC/SPC1 定义约束；仅引用现有集合则只输出 SPCADD 引用。">
-                    <select className="wbInput" value={draft.mode} onChange={(e) => patch("mode", e.target.value)}><option value="new">新建 SPC</option><option value="reference">仅引用现有集合</option></select>
-                  </Field>
-                  <Field label="外部 SPC Set ID（逗号分隔）"><RawInput value={draft.existingSpcSetIds} onChange={(v) => patch("existingSpcSetIds", v)} mono /></Field>
-                </div>
-                <div className="wbSubHead">约束行（DOF 用 1-6，可写 1,2,5-7）</div>
-                {(draft.rows as Draft[]).map((row, index) => (
-                  <div className="wbRowGrid three" key={index}>
-                    <Field label="Node"><RawInput value={row.nodeId} onChange={(v) => { const rows = [...(draft.rows as Draft[])]; rows[index] = { ...rows[index], nodeId: v }; patch("rows", rows); }} mono /></Field>
-                    <Field label="DOF" help="自由度编号 1-6 = TX/TY/TZ/RX/RY/RZ，可写 1,2,5-7 表示集合或区间。"><RawInput value={row.dofs} onChange={(v) => { const rows = [...(draft.rows as Draft[])]; rows[index] = { ...rows[index], dofs: v }; patch("rows", rows); }} mono /></Field>
-                    <Field label="强迫位移（0/空=齐次）" help="非零表示强迫位移值（模型单位）；0 或空表示齐次约束。"><RawInput value={row.value} onChange={(v) => { const rows = [...(draft.rows as Draft[])]; rows[index] = { ...rows[index], value: v }; patch("rows", rows); }} mono /></Field>
-                    <button type="button" className="wbMini danger" onClick={() => patch("rows", (draft.rows as Draft[]).filter((_, i) => i !== index))}>删除</button>
-                  </div>
-                ))}
-                <button type="button" className="wbMini" onClick={() => patch("rows", [...(draft.rows as Draft[]), { nodeId: "", dofs: "", value: "" }])}>+ 添加约束行</button>
-              </>
-            )}
-
-            {activeId === "normal-modes" && (
-              <div className="wbRow3">
-                <Field label="工况名"><RawInput value={draft.name} onChange={(v) => patch("name", v)} /></Field>
-                <Field label="外部约束 SPC Set ID"><RawInput value={draft.existingSpcSetId} onChange={(v) => patch("existingSpcSetId", v)} mono /></Field>
-                <Field label="频率下限 Hz" help="EIGRL 提取频率下限，0 表示不设下限。"><RawInput value={draft.eigrlMinHz} onChange={(v) => patch("eigrlMinHz", v)} mono /></Field>
-                <Field label="频率上限 Hz" help="EIGRL 提取频率上限。"><RawInput value={draft.eigrlMaxHz} onChange={(v) => patch("eigrlMaxHz", v)} mono /></Field>
-                <Field label="模态阶数" help="期望提取的模态数量（ND）。"><RawInput value={draft.numModes} onChange={(v) => patch("numModes", v)} mono /></Field>
-              </div>
-            )}
-
-            {activeId === "frequency-response" && (
-              <div className="wbRow3">
-                <Field label="工况名"><RawInput value={draft.name} onChange={(v) => patch("name", v)} /></Field>
-                <Field label="外部 SPC Set ID"><RawInput value={draft.existingSpcSetId} onChange={(v) => patch("existingSpcSetId", v)} mono /></Field>
-                <Field label="频段下限 Hz" help="FREQ1 频率扫描起点。"><RawInput value={draft.minHz} onChange={(v) => patch("minHz", v)} mono /></Field>
-                <Field label="频段上限 Hz"><RawInput value={draft.maxHz} onChange={(v) => patch("maxHz", v)} mono /></Field>
-                <Field label="步长 Hz" help="FREQ1 频率增量，越小曲线越密。"><RawInput value={draft.stepHz} onChange={(v) => patch("stepHz", v)} mono /></Field>
-                <Field label="模态上限 Hz" help="模态提取（EIGRL）上限，应覆盖求解频段以保证精度。"><RawInput value={draft.eigrlMaxHz} onChange={(v) => patch("eigrlMaxHz", v)} mono /></Field>
-                <Field label="阻尼比" help="模态临界阻尼比（TABDMP1），如 0.02 表示 2%。"><RawInput value={draft.dampingRatio} onChange={(v) => patch("dampingRatio", v)} mono /></Field>
-              </div>
-            )}
-
-            {activeId === "random-psd" && (
-              <>
-                <div className="wbRow3">
-                  <Field label="工况名"><RawInput value={draft.name} onChange={(v) => patch("name", v)} /></Field>
-                  <Field label="激励类型" help="基座加速度（SPCD + RLOAD2 TYPE=ACCE）或随机节点力（DAREA + RLOAD2 TYPE=LOAD）。">
-                    <select className="wbInput" value={draft.excKind} onChange={(e) => patch("excKind", e.target.value)}><option value="base-acceleration">基座加速度</option><option value="applied-force">随机节点力</option></select>
-                  </Field>
-                  <Field label="激励 Node ID"><RawInput value={draft.nodeId} onChange={(v) => patch("nodeId", v)} mono /></Field>
-                  <Field label="外部 SPC Set ID"><RawInput value={draft.existingSpcSetId} onChange={(v) => patch("existingSpcSetId", v)} mono /></Field>
-                  {draft.excKind === "base-acceleration" ? (
-                    <Field label="分量 (1/2/3)" help="激励方向分量：1=X、2=Y、3=Z 平动自由度。"><RawInput value={draft.component} onChange={(v) => patch("component", v)} mono /></Field>
-                  ) : (
-                    <Field label="参考力 N" help="随机力 PSD 的参考幅值（N），用于将无量纲 PSD 换算为物理谱。"><RawInput value={draft.referenceForceN} onChange={(v) => patch("referenceForceN", v)} mono /></Field>
-                  )}
-                  <Field label="PSD 单位" help="输入谱的单位，如 g^2/Hz 或 N^2/Hz；需与激励类型匹配。"><RawInput value={draft.inputPsdUnit} onChange={(v) => patch("inputPsdUnit", v)} mono /></Field>
-                </div>
-                <div className="wbSubHead">高级随机振动（模态 / 激励形式 / 频点 / 轴模式）</div>
-                <div className="wbRow3">
-                  <Field label="模态法" help="EIGRL(Lanczos) 或 EIGRA(AMSES)。AMSES 必须给出最高模态频率 V2。">
-                    <select className="wbInput" value={draft.modalMethod} onChange={(e) => patch("modalMethod", e.target.value)}>
-                      <option value="LANCZOS">EIGRL (Lanczos)</option>
-                      <option value="EIGRA">EIGRA (AMSES)</option>
-                    </select>
-                  </Field>
-                  <Field label="激励形式" help="RLOAD2 幅值/相位（默认）或 RLOAD1 复数实/虚部（TC/TD）。">
-                    <select className="wbInput" value={draft.excForm} onChange={(e) => patch("excForm", e.target.value)}>
-                      <option value="RLOAD2">RLOAD2 (幅相)</option>
-                      <option value="RLOAD1">RLOAD1 (实虚)</option>
-                    </select>
-                  </Field>
-                  <Field label="频点分布" help="FREQ1 等间隔；FREQ2 对数区间。FREQ3/FREQ4 未实现。">
-                    <select className="wbInput" value={draft.freqKind} onChange={(e) => patch("freqKind", e.target.value)}>
-                      <option value="FREQ1">FREQ1 (等间隔)</option>
-                      <option value="FREQ2">FREQ2 (对数)</option>
-                    </select>
-                  </Field>
-                  <Field label="轴模式" help="single 单轴；sequential-tri 生成 3 MFREQ + 3 RANDOM 的独立自谱（仅基座加速度，非同时相关合成）。">
-                    <select className="wbInput" value={draft.axisMode} onChange={(e) => patch("axisMode", e.target.value)}>
-                      <option value="single">单轴</option>
-                      <option value="sequential-tri">顺序三轴 (独立)</option>
-                    </select>
-                  </Field>
-                  {draft.freqKind === "FREQ2" && (
-                    <Field label="FREQ2 区间数 NF" help="对数区间个数，频点总数 NF+1。"><RawInput value={draft.freqNf} onChange={(v) => patch("freqNf", v)} mono /></Field>
+      <div className="appBody">
+        <main className="appWorkspace">
+          {resolvedId === "home" ? (
+            <ModuleGallery
+              modules={modules}
+              openIds={validOpenIds}
+              templateBusy={templateBusy}
+              onOpen={selectModule}
+              onOpenPalette={() => setPaletteOpen(true)}
+              onImportTemplate={() => void importTemplate()}
+              onExportTemplate={() => void exportTemplate()}
+            />
+          ) : resolvedId === "multi-case" ? (
+            <MultiCaseWorkspace
+              singleModuleDrafts={drafts}
+              onToast={pushToast}
+            />
+          ) : resolvedId === "tabular-load" ? (
+            <TabularModule
+              onToast={pushToast}
+            />
+          ) : (
+            <div className="wbWorkspace">
+              <header className="wbActionBar">
+                <div className="wbActionBarTitle">
+                  <h1>{active?.title ?? resolvedId}</h1>
+                  {meta && <span className="wbSubTag">{meta.solTag} · 输出 {meta.outputExt}</span>}
+                  {active && (
+                    <span className={"statusPill " + active.status}>
+                      {STATUS_LABELS[active.status] ?? active.status}
+                    </span>
                   )}
                 </div>
-                {draft.modalMethod === "EIGRA" && (
-                  <div className="wbRow3">
-                    <Field label="EIGRA V2 Hz (必填)" help="最高模态频率上限，应高于求解频段。"><RawInput value={draft.eigraV2} onChange={(v) => patch("eigraV2", v)} mono /></Field>
-                    <Field label="EIGRA V1 Hz"><RawInput value={draft.eigraV1} onChange={(v) => patch("eigraV1", v)} mono /></Field>
-                    <Field label="EIGRA ND (可选)"><RawInput value={draft.eigraNd} onChange={(v) => patch("eigraNd", v)} mono /></Field>
-                    <Field label="AMPFFACT" help="内部子结构模态扩展因子，默认约 5。"><RawInput value={draft.eigraAmpffact} onChange={(v) => patch("eigraAmpffact", v)} mono /></Field>
-                    <Field label="MSGLVL (0/1)"><RawInput value={draft.eigraMsglvl} onChange={(v) => patch("eigraMsglvl", v)} mono /></Field>
-                    <Field label="NORM" help="MASS/MAX/ALL 归一化。">
-                      <select className="wbInput" value={draft.eigraNorm} onChange={(e) => patch("eigraNorm", e.target.value)}>
-                        <option value="MASS">MASS</option><option value="MAX">MAX</option><option value="ALL">ALL</option>
-                      </select>
-                    </Field>
-                  </div>
-                )}
-                <div className="wbSubHead">PSD 谱表导入与模板</div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-                  <button type="button" className="wbMini" disabled={psdBusy} onClick={() => void importPsdSpectrum()}>
-                    {psdBusy ? "读取中…" : "从文件导入（CSV/TXT/XLSX）"}
+
+                <div className="wbActionBarButtons">
+                  <button
+                    type="button"
+                    className="btnSecondary"
+                    disabled={busy}
+                    onClick={resetActiveDraft}
+                    title="将该模块参数恢复为出厂默认值"
+                  >
+                    <ResetIcon size={14} /> 恢复默认
                   </button>
-                  <button type="button" className="wbMini" onClick={() => void downloadPsdTemplate("xlsx")}>下载 Excel 模板</button>
-                  <button type="button" className="wbMini" onClick={() => void downloadPsdTemplate("csv")}>下载 CSV 模板</button>
-                  <button type="button" className="wbMini" onClick={loadPsdSample}>载入示例</button>
+                  <button
+                    type="button"
+                    className={canExport && !previewStale ? "btnSecondary" : "btnPrimary"}
+                    disabled={busy}
+                    onClick={() => void runPreview()}
+                    title="调用 Rust 求解器引擎校验参数并生成 Deck（快捷键 Ctrl+Enter）"
+                  >
+                    {busy ? <SpinnerIcon size={14} /> : <PlayCheckIcon size={14} />}
+                    <span>{busy ? "校验中…" : previewStale ? "重新校验" : "校验 / 预览 Deck"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={canExport && !previewStale ? "btnPrimary" : "btnSecondary"}
+                    disabled={busy || !canExport}
+                    onClick={() => void runExport()}
+                  >
+                    <DownloadIcon size={14} />
+                    <span>{active?.solver === "radioss" ? "导出增量 .rad" : "导出增量 FEM"}</span>
+                  </button>
                 </div>
-                {psdImport && (
-                  <div className="wbAlert info">
-                    <div>
-                      已导入 <b>{psdImport.points.length}</b> 个谱点
-                      {" · 来源 " + psdImport.sourceKind.toUpperCase()}
-                      {psdImport.sheetName ? " · 工作表「" + psdImport.sheetName + "」" : ""}
-                      {psdImport.header ? " · 表头「" + psdImport.header + "」" : ""}
-                      {psdImport.ignoredLines ? " · 忽略 " + psdImport.ignoredLines + " 行" : ""}
-                    </div>
-                    {psdImport.warnings.length > 0 && (
-                      <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
-                        {psdImport.warnings.map((w, i) => <li key={i}>{w}</li>)}
-                      </ul>
-                    )}
-                  </div>
-                )}
-                <details style={{ marginBottom: 8 }}>
-                  <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--wb-muted, #666)" }}>谱表识别规则（点击展开）</summary>
-                  <ul style={{ margin: "6px 0 0", paddingLeft: 18, lineHeight: 1.6, fontSize: 12 }}>
-                    <li>支持 CSV / TXT（逗号、制表符、分号或空白分隔）与 XLSX / XLS / ODS 工作簿。</li>
-                    <li>优先识别表头：频率列（频率Hz / Freq / F / X）与 PSD 列（PSD / 功率谱密度 / 谱值 / g^2/Hz），中英文均可。</li>
-                    <li>无表头时按每行前两列数值识别；若首列为 1,2,3… 递增序号会自动跳过。</li>
-                    <li>单元格中的单位会被忽略，例如“10 Hz”“0.003 g^2/Hz”会读取为 10 与 0.003。</li>
-                    <li>以 # 或 // 开头的说明行、空行自动忽略；识别结果仍需人工核对。</li>
-                  </ul>
-                </details>
-                <div className="wbSubHead">PSD 谱表（Hz / PSD）· 插值 {String(draft.interpolation)}</div>
-                <div className="wbRow3">
-                  <Field label="插值" help="谱点之间的插值方式；随机振动通常 LOG-LOG。">
-                    <select className="wbInput" value={draft.interpolation} onChange={(e) => patch("interpolation", e.target.value)}>{["LOG-LOG", "LINEAR-LINEAR", "LOG-LINEAR", "LINEAR-LOG"].map((m) => <option key={m} value={m}>{m}</option>)}</select>
-                  </Field>
-                  <Field label="越界策略" help="频点超出谱表范围时：ERROR 拒绝外推，FLAT 取端点平坦外推。">
-                    <select className="wbInput" value={draft.outOfRange} onChange={(e) => patch("outOfRange", e.target.value)}><option value="ERROR">ERROR（拒绝外推）</option><option value="FLAT">FLAT（平坦外推）</option></select>
-                  </Field>
-                </div>
-                {(draft.points as Draft[]).map((p, index) => (
-                  <div className="wbRowGrid" key={index}>
-                    <Field label="频率 Hz"><NumericInput value={num(p.frequencyHz)} onCommit={(v) => { const pts = [...(draft.points as Draft[])]; pts[index] = { ...pts[index], frequencyHz: String(v) }; patch("points", pts); }} /></Field>
-                    <Field label="PSD"><NumericInput value={num(p.psd)} onCommit={(v) => { const pts = [...(draft.points as Draft[])]; pts[index] = { ...pts[index], psd: String(v) }; patch("points", pts); }} /></Field>
-                    <button type="button" className="wbMini danger" onClick={() => patch("points", (draft.points as Draft[]).filter((_, i) => i !== index))}>删除</button>
-                  </div>
-                ))}
-                <button type="button" className="wbMini" onClick={() => patch("points", [...(draft.points as Draft[]), { frequencyHz: "", psd: "" }])}>+ 添加频点</button>
-                <div className="wbRow3">
-                  <Field label="求解频段下限 Hz"><RawInput value={draft.minHz} onChange={(v) => patch("minHz", v)} mono /></Field>
-                  <Field label="求解频段上限 Hz"><RawInput value={draft.maxHz} onChange={(v) => patch("maxHz", v)} mono /></Field>
-                  <Field label="频率步长 Hz" help="FREQ1 频率增量。"><RawInput value={draft.stepHz} onChange={(v) => patch("stepHz", v)} mono /></Field>
-                  <Field label="模态上限 Hz" help="模态提取上限，应覆盖求解频段。"><RawInput value={draft.modalMaxHz} onChange={(v) => patch("modalMaxHz", v)} mono /></Field>
-                  <Field label="阻尼比"><RawInput value={draft.dampingRatio} onChange={(v) => patch("dampingRatio", v)} mono /></Field>
-                  <Field label="输出档位">
-                    <select className="wbInput" value={draft.outputProfile} onChange={(e) => patch("outputProfile", e.target.value)}><option value="PSD_AND_RMS">PSD + RMS</option><option value="RMS_ONLY">仅 RMS</option></select>
-                  </Field>
-                </div>
-                <label className="wbCheck">
-                  <input type="checkbox" checked={Boolean(draft.displacement)} onChange={(e) => patch("displacement", e.target.checked)} /> 位移
-                  <input type="checkbox" checked={Boolean(draft.stress)} onChange={(e) => patch("stress", e.target.checked)} /> 应力
-                  <input type="checkbox" checked={Boolean(draft.acceleration)} onChange={(e) => patch("acceleration", e.target.checked)} /> 加速度
-                </label>
-                <label className="wbCheck warn">
-                  <input type="checkbox" checked={Boolean(draft.confirmSpc)} onChange={(e) => patch("confirmSpc", e.target.checked)} />
-                  我确认被激励节点 DOF 包含在 SPC 集合中，且不是 RBE2 依赖自由度
-                </label>
-              </>
-            )}
+              </header>
 
-            <div className="wbFormActions">
-              <button type="button" className="primary" disabled={busy} onClick={() => void runPreview()}>{busy ? "处理中…" : "校验 / 预览 Deck"}</button>
-              <button type="button" className="ghost" disabled={busy || !(preview?.summary.canExport)} onClick={() => void runExport()}>{active?.solver === "radioss" ? "导出增量 .rad" : "导出增量 FEM"}</button>
-            </div>
-          </div>
+              <div className="wbSplit">
+                <div className="wbFormCol">
+                  <WorkbenchForms
+                    activeId={resolvedId}
+                    draft={draft}
+                    patch={patch}
+                    psdBusy={psdBusy}
+                    psdImport={psdImport}
+                    gravityRowIndex={gravityRowIndex}
+                    onSelectGravityRow={setGravityRowIndex}
+                    onImportPsd={() => void importPsdSpectrum()}
+                    onDownloadTemplate={(fmt) => void downloadPsdTemplate(fmt)}
+                    onLoadSample={loadPsdSample}
+                    onNotify={(message) => pushToast("info", message)}
+                  />
+                </div>
 
-          <aside className="wbPreviewCol">
-            <ModulePreview activeId={activeId} draft={draft} />
-            <div className="wbPreviewPanel">
-              <div className="wbPanelHead"><h2>求解器 Deck 预览</h2><span>仅 Generated；导入/求解需实机验证</span></div>
-              {preview ? (
-                <>
-                  <div className="wbMetrics">
-                    <div><span>SOL</span><b>{preview.summary.sol ?? "—"}</b></div>
-                    <div><span>子工况</span><b>{preview.summary.subcaseCount}</b></div>
-                    <div><span>卡片</span><b>{Object.values(preview.summary.cardCounts).reduce((a, b) => a + b, 0)}</b></div>
-                    <div><span>行数</span><b>{preview.summary.lineCount}</b></div>
-                  </div>
-                  <div className="wbChips">
-                    {Object.entries(preview.summary.cardCounts).map(([name, count]) => <span key={name} className="wbChip">{name} × {count}</span>)}
-                  </div>
-                  <h3>诊断</h3>
-                  <DiagList items={preview.diagnostics} />
-                  <h3>外部引用（UNVERIFIED_EXTERNAL）</h3>
-                  {preview.externalReferences.length === 0 ? <p className="wbMuted">无外部引用。</p> : (
-                    <table className="wbTable"><thead><tr><th>类型</th><th>ID</th><th>说明</th><th>状态</th></tr></thead><tbody>
-                      {preview.externalReferences.map((r, i) => <tr key={i}><td>{r.kind}</td><td className="mono">{r.id}</td><td>{r.label ?? "—"}</td><td className="warnText">{r.status}</td></tr>)}
-                    </tbody></table>
-                  )}
-                  <h3>ID 计划</h3>
-                  {preview.idPlan.length === 0 ? <p className="wbMuted">无自动分配实体。</p> : (
-                    <table className="wbTable"><thead><tr><th>类型</th><th>逻辑键</th><th>ID</th></tr></thead><tbody>
-                      {preview.idPlan.map((a, i) => <tr key={i}><td>{a.kind}</td><td>{a.key}</td><td className="mono">{a.id}</td></tr>)}
-                    </tbody></table>
-                  )}
-                  <h3>{active?.solver === "radioss" ? "Radioss Deck 文本" : "FEM 文本"}</h3>
-                  <pre className="wbCode">{preview.femPreview || "（存在错误，未生成文本）"}</pre>
-                </>
-              ) : (
-                <div className="wbEmpty">填写参数后点击“校验 / 预览 Deck”。<br /><small>左侧可视化预览无需点击即可实时查看；此处显示求解器实际生成的文本。</small></div>
-              )}
+                <div className="wbInspectorCol">
+                  <InspectorPane
+                    activeId={resolvedId}
+                    solver={active?.solver ?? "optistruct"}
+                    draft={draft}
+                    preview={preview}
+                    stale={previewStale}
+                    busy={busy}
+                    tab={inspectorTab}
+                    gravityRowIndex={gravityRowIndex}
+                    onSelectGravityRow={setGravityRowIndex}
+                    onTabChange={setActiveInspectorTab}
+                    onValidate={() => void runPreview()}
+                    onExport={() => void runExport()}
+                    onCopyText={(text, label) => void handleCopyText(text, label)}
+                  />
+                </div>
+              </div>
             </div>
-          </aside>
-        </section>
-          </>
-        )}
-      </main>
+          )}
+        </main>
+      </div>
+
+      <CommandPalette
+        open={paletteOpen}
+        modules={modules}
+        activeId={resolvedId}
+        openIds={validOpenIds}
+        onClose={() => setPaletteOpen(false)}
+        onSelectModule={selectModule}
+        onCloseModule={closeTab}
+        onValidate={isParametric ? () => void runPreview() : undefined}
+        onImportTemplate={() => void importTemplate()}
+        onExportTemplate={() => void exportTemplate()}
+      />
+
+      {toasts.length > 0 && (
+        <div className="toastStack" aria-live="polite">
+          {toasts.map((item) => (
+            <div key={item.id} className={"toastItem " + item.tone}>
+              <span className="toastMsg">{item.text}</span>
+              <button
+                type="button"
+                className="iconTrashBtn"
+                onClick={() => setToasts((list) => list.filter((t) => t.id !== item.id))}
+                aria-label="关闭"
+              >
+                <XIcon size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

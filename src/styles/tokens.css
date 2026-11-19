@@ -1,0 +1,133 @@
+:root {
+  /* Surfaces */
+  --bg-canvas: #f3f5f8;
+  --bg-surface: #ffffff;
+  --bg-subtle: #f7f9fc;
+  --bg-muted: #edf1f7;
+  --bg-popover: #10151c;
+  --bg-terminal: #0d1117;
+  --bg-terminal-gutter: #131922;
+
+  /* Text */
+  --text-primary: #111827;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  --text-dim: #94a3b8;
+
+  /* Borders */
+  --border: #dde3ec;
+  --border-strong: #c7d0de;
+  --border-subtle: #eaeef5;
+
+  /* Brand & Semantic Accents */
+  --accent: #1d4ed8;
+  --accent-hover: #1e40af;
+  --accent-soft: #eff6ff;
+  --accent-border: #bfdbfe;
+
+  --teal: #0e7490;
+  --teal-soft: #ecfeff;
+
+  --emerald: #0e8a56;
+  --emerald-soft: #ecfdf5;
+  --emerald-border: #a7f3d0;
+
+  --amber: #b45309;
+  --amber-soft: #fffbeb;
+  --amber-border: #fde68a;
+
+  --radioss: #c2410c;
+  --radioss-soft: #fff7ed;
+  --radioss-border: #fed7aa;
+
+  --crimson: #dc2626;
+  --crimson-soft: #fef2f2;
+  --crimson-border: #fecaca;
+
+  /* Typography */
+  --font-sans: "Inter", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", "Cascadia Code", "Consolas", monospace;
+
+  /* Radii */
+  --radius-xs: 5px;
+  --radius-sm: 7px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+
+  /* Shadows */
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-sm: 0 2px 6px rgba(15, 23, 42, 0.06);
+  --shadow-lg: 0 20px 44px -14px rgba(15, 23, 42, 0.24);
+
+  /* Layout Chrome */
+  --topbar-h: 40px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+code,
+pre,
+kbd,
+.mono {
+  font-family: var(--font-mono);
+}
+
+.mono {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Thin precision scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.32);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.5);
+}
+
+@keyframes lc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin {
+  animation: lc-spin 0.85s linear infinite;
+}

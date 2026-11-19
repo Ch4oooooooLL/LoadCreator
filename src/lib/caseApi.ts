@@ -49,6 +49,7 @@ export interface PreviewResult {
   kind: string;
   diagnostics: Diagnostic[];
   femPreview: string;
+  functionsCsv?: string;
   externalReferences: ExternalReference[];
   idPlan: IdAssignment[];
   summary: PreviewSummary;
@@ -83,18 +84,6 @@ export async function exportCaseFiles(directory: string, baseName: string, files
   return invoke<string[]>("export_case_files", { directory, baseName, files });
 }
 
-export async function saveProject(path: string, document: unknown): Promise<string> {
-  return invoke<string>("save_project", { path, document });
-}
-
-export async function openProject(path: string): Promise<unknown> {
-  return invoke<unknown>("open_project", { path });
-}
-
-export async function migrateLegacyWorkspace(legacy: unknown): Promise<unknown> {
-  return invoke<unknown>("migrate_legacy_workspace_cmd", { legacy });
-}
-
 /* ---- PSD spectrum import / standard template ---- */
 
 export interface PsdImportPoint {
@@ -121,6 +110,52 @@ export async function readPsdSpectrumFile(path: string): Promise<PsdImportResult
 
 export async function writePsdTemplate(path: string, format: "csv" | "xlsx"): Promise<string> {
   return invoke<string>("write_psd_template", { path, format });
+}
+
+export async function saveTextFile(path: string, content: string): Promise<string> {
+  return invoke<string>("save_text_file", { path, content });
+}
+
+export async function readTextFile(path: string): Promise<string> {
+  return invoke<string>("read_text_file", { path });
+}
+
+export async function saveProject(path: string, document: Record<string, unknown>): Promise<string> {
+  return invoke<string>("save_project", { path, document });
+}
+
+export async function openProject(path: string): Promise<Record<string, unknown>> {
+  return invoke<Record<string, unknown>>("open_project", { path });
+}
+
+export interface RadiossCurveImportResult {
+  points: Array<{ time: number; value: number }>;
+  warnings: string[];
+  ignoredLines: number;
+  sourceKind: string;
+  header?: string | null;
+  sheetName?: string | null;
+}
+
+export interface RadiossFunctionExportItem {
+  id: number;
+  title: string;
+  role: string;
+  xLabel: string;
+  yLabel: string;
+  points: Array<{ time: number; value: number }>;
+}
+
+export async function readRadiossCurveFile(path: string): Promise<RadiossCurveImportResult> {
+  return invoke<RadiossCurveImportResult>("read_radioss_curve_file", { path });
+}
+
+export async function exportRadiossFunctionsTable(
+  path: string,
+  format: "csv" | "xlsx",
+  functions: RadiossFunctionExportItem[],
+): Promise<string> {
+  return invoke<string>("export_radioss_functions_table", { path, format, functions });
 }
 
 export { isDesktop };

@@ -2,6 +2,7 @@ import {
   CurveChart,
   DirectionGizmo,
   DofGrid,
+  GravityVectorGizmo,
   MiniBars,
   RangeBar,
   SpectrumChart,
@@ -10,6 +11,7 @@ import {
   type ChartPoint,
   type RangeSeg,
 } from "@/components/charts/Charts";
+import { parseFloatList } from "@/lib/caseDrafts";
 
 type Draft = Record<string, any>;
 
@@ -20,8 +22,11 @@ const n = (v: unknown): number => {
 
 function dirVector(dir: string): [number, number, number] {
   const d = String(dir ?? "X").trim().toUpperCase();
-  if (d === "Y") return [0, 1, 0];
-  if (d === "Z") return [0, 0, 1];
+  if (d === "-X" || d === "-XX") return [-1, 0, 0];
+  if (d === "Y" || d === "+Y" || d === "YY" || d === "+YY") return [0, 1, 0];
+  if (d === "-Y" || d === "-YY") return [0, -1, 0];
+  if (d === "Z" || d === "+Z" || d === "ZZ" || d === "+ZZ") return [0, 0, 1];
+  if (d === "-Z" || d === "-ZZ") return [0, 0, -1];
   return [1, 0, 0];
 }
 
@@ -87,13 +92,26 @@ function RopsPreview({ draft, fops }: { draft: Draft; fops: boolean }) {
   const endTime = n(draft.endTime);
   const last = curve.length ? curve[curve.length - 1].x : 0;
   const willExtrapolate = endTime > 0 && last > 0 && last < endTime;
-  const dir = dirVector(draft.direction);
+  const dirMode = String(draft.directionMode || "axis");
+  const rawVec = Array.isArray(draft.directionVector) ? draft.directionVector : ["0", "0", "-1"];
+  const customVec: [number, number, number] = [n(rawVec[0]), n(rawVec[1]), n(rawVec[2])];
+  const dir = dirMode === "vector" ? customVec : dirVector(draft.direction);
+  const dirLabel =
+    dirMode === "vector"
+      ? `(${customVec[0]}, ${customVec[1]}, ${customVec[2]})`
+      : String(draft.direction ?? "X");
   const constraints = Array.isArray(draft.constraints) ? draft.constraints : [];
+  const contacts = Array.isArray(draft.contacts) ? draft.contacts : [];
+  const gravityCount = Array.isArray(draft.gravities) && draft.gravities.length > 0
+    ? draft.gravities.filter((field: Draft) => field.enabled !== false).length
+    : Number(Boolean(draft.gravityEnabled));
+  const historyCount = Array.isArray(draft.timeHistories)
+    ? draft.timeHistories.filter((row: Draft) => row.enabled !== false).length : 0;
   const impact = (draft.impact ?? {}) as Draft;
-  const gStd = 9.80665 * (n(impact.gravityG) || 1);
+  const gStd = 9.80665 * (String(impact.gravityG ?? "").trim() ? n(impact.gravityG) : 1);
   const hM = n(impact.dropHeightMm) / 1000;
   const mass = n(impact.dropMassKg);
-  const v0 = hM > 0 ? Math.sqrt(2 * gStd * hM) : 0;
+  const v0 = hM > 0 && gStd > 0 ? Math.sqrt(2 * gStd * hM) : 0;
   const energy = mass > 0 && hM > 0 ? mass * gStd * hM : 0;
 
   return (
@@ -101,8 +119,8 @@ function RopsPreview({ draft, fops }: { draft: Draft; fops: boolean }) {
       <VizCard title={fops ? "落锤位移曲线（受控位移近似）" : "位移曲线 t / u"} hint={"时间单位与终止时间一致" + (willExtrapolate ? " · 末点早于 Tstop，区间外线性外推" : "")}>
         <CurveChart
           points={curve}
-          xLabel="时间 (ms)"
-          yLabel={fops ? "落锤位移 (mm)" : "位移 (mm)"}
+          xLabel={`时间 (${String(draft.workTime || "ms")})`}
+          yLabel={fops ? `落锤位移 (${String(draft.workLength || "mm")})` : `位移 (${String(draft.workLength || "mm")})`}
           markerX={endTime > 0 ? endTime : undefined}
           markerLabel="Tstop"
           tone={fops ? "amber" : "brand"}
@@ -120,22 +138,24 @@ function RopsPreview({ draft, fops }: { draft: Draft; fops: boolean }) {
         </VizCard>
       )}
       <div className="vizSplit">
-        <VizCard title="加载方向">
-          <DirectionGizmo vector={dir} label={String(draft.direction ?? "X")} />
+        <VizCard title={dirMode === "vector" ? "加载方向（自定义向量）" : "加载方向"}>
+          <DirectionGizmo vector={dir} label={dirLabel} />
         </VizCard>
         <VizCard title="工况概览">
           <StatRow
             items={[
               { label: "曲线点数", value: String(curve.length) },
               { label: "约束组", value: String(constraints.length) },
-              { label: "终止时间", value: endTime > 0 ? String(endTime) : "—" },
-              { label: "重力", value: draft.gravityEnabled ? "启用" : "未启用", tone: draft.gravityEnabled ? "on" : "" },
+              { label: "TYPE7 接触", value: contacts.length > 0 ? `${contacts.length} 组` : "未定义", tone: contacts.length > 0 ? "on" : "" },
+              { label: "时间步", value: draft.timeStepMode === "ams" ? "AMS" : draft.timeStepMode === "noda-cst" ? "NODA/CST" : "自然" },
+              { label: "重力", value: gravityCount > 0 ? `${gravityCount} 个工况` : "未启用", tone: gravityCount > 0 ? "on" : "" },
+              { label: "TH 输出", value: `${historyCount} 组`, tone: historyCount > 0 ? "on" : "" },
             ]}
           />
         </VizCard>
       </div>
       <VizCard title="求解时间轴" hint="动画输出 / 时程输出">
-        <TimelineBar endTime={endTime} animStart={n(draft.animStart)} animInterval={n(draft.animInterval)} thInterval={n(draft.thInterval)} />
+        <TimelineBar endTime={endTime} animStart={n(draft.animStart)} animInterval={n(draft.animInterval)} thInterval={draft.engineControl?.emitTfile === false ? 0 : n(draft.thInterval)} />
       </VizCard>
     </>
   );
@@ -145,28 +165,38 @@ function PsdPreview({ draft }: { draft: Draft }) {
   const points: ChartPoint[] = (Array.isArray(draft.points) ? draft.points : []).map((p: Draft) => ({ x: n(p.frequencyHz), y: n(p.psd) }));
   const minHz = n(draft.minHz);
   const maxHz = n(draft.maxHz);
+  const modalMin = draft.modalMethod === "EIGRA" ? n(draft.eigraV1) : n(draft.modalMinHz);
+  const modalMax = draft.modalMethod === "EIGRA" ? n(draft.eigraV2) : n(draft.modalMaxHz);
   const unit = String(draft.inputPsdUnit ?? "");
   const grms = unit.trim().toLowerCase().startsWith("g") ? approxGrms(points, minHz, maxHz) : null;
+  const freqKind = String(draft.freqKind ?? "FREQ1");
+  const freqPoints =
+    freqKind === "FREQ2"
+      ? (parseInt(String(draft.freqNf ?? "10"), 10) || 10) + 1
+      : freqKind === "FREQ"
+        ? parseFloatList(draft.explicitHzText).length
+        : n(draft.stepHz) > 0 ? Math.max(2, Math.floor((maxHz - minHz) / n(draft.stepHz)) + 1) : 0;
+
   return (
     <>
-      <VizCard title="PSD 频谱（对数-对数）" hint={"插值 " + String(draft.interpolation ?? "LOG-LOG")}>
+      <VizCard title="PSD 频谱（对数-对数）" hint={`插值 ${String(draft.interpolation ?? "LOG-LOG")} · ${String(draft.excForm ?? "RLOAD2")} · ${draft.axisMode === "sequential-tri" ? "顺序三轴 (6 子工况)" : "单轴 (2 子工况)"}`}>
         <SpectrumChart points={points} band={[minHz, maxHz]} yLabel={"PSD (" + (unit || "g^2/Hz") + ")"} />
       </VizCard>
       <StatRow
         items={[
-          { label: "频点", value: String(points.length) },
+          { label: "谱点 / 频点", value: `${points.length} / ${freqPoints || "—"}` },
           { label: "求解频段", value: maxHz > 0 ? minHz + "–" + maxHz + " Hz" : "—" },
           { label: "约 Grms", value: grms !== null ? grms.toFixed(3) + " g" : "需 g²/Hz", tone: grms !== null ? "on" : "" },
           { label: "阻尼比", value: String(draft.dampingRatio ?? "—") },
         ]}
       />
-      <VizCard title="求解频段" hint="绿色为积分频段">
+      <VizCard title="求解与模态覆盖" hint={modalMax < maxHz ? "提示：模态上限低于求解上限，可能影响截断精度" : "模态范围应覆盖求解频段"}>
         <RangeBar
-          min={Math.min(minHz || 0, n(draft.modalMinHz) || 0)}
-          max={Math.max(maxHz || 0, n(draft.modalMaxHz) || 0, 1)}
+          min={Math.min(minHz || 0, modalMin || 0)}
+          max={Math.max(maxHz || 0, modalMax || 0, 1)}
           segments={[
-            { from: minHz, to: maxHz, label: "求解频段", tone: "brand" },
-            { from: n(draft.modalMinHz), to: n(draft.modalMaxHz), label: "模态提取", tone: "blue" },
+            { from: minHz, to: maxHz, label: `求解频段 (${freqKind})`, tone: "brand" },
+            { from: modalMin, to: modalMax, label: `模态提取 (${draft.modalMethod === "EIGRA" ? "EIGRA" : "EIGRL"})`, tone: "blue" },
           ]}
         />
       </VizCard>
@@ -181,9 +211,10 @@ function FreqResponsePreview({ draft }: { draft: Draft }) {
   ];
   const step = n(draft.stepHz);
   const count = step > 0 ? Math.floor((n(draft.maxHz) - n(draft.minHz)) / step) + 1 : 0;
+  const modalLow = n(draft.eigrlMaxHz) < n(draft.maxHz);
   return (
     <>
-      <VizCard title="频率扫描范围" hint="FREQ1 步长扫描">
+      <VizCard title="频率扫描与模态覆盖" hint={modalLow ? "注意：模态上限低于求解上限" : "FREQ1 步长扫描"}>
         <RangeBar
           min={Math.min(n(draft.eigrlMinHz) || 0, n(draft.minHz) || 0)}
           max={Math.max(n(draft.eigrlMaxHz) || 0, n(draft.maxHz) || 0, 1)}
@@ -195,6 +226,7 @@ function FreqResponsePreview({ draft }: { draft: Draft }) {
           { label: "频点估算", value: count > 0 ? String(count) : "—" },
           { label: "步长", value: step > 0 ? step + " Hz" : "—" },
           { label: "阻尼比", value: String(draft.dampingRatio ?? "—") },
+          { label: "外部载荷", value: String(draft.loadId ?? "").trim() || "无" },
         ]}
       />
     </>
@@ -219,20 +251,145 @@ function ModalPreview({ draft }: { draft: Draft }) {
   );
 }
 
-function GravityPreview({ draft }: { draft: Draft }) {
-  const vec = (Array.isArray(draft.direction) ? draft.direction : ["0", "0", "-1"]).map(n) as [number, number, number];
+function GravityPreview({
+  draft,
+  selectedIndex = 0,
+  onSelectIndex,
+}: {
+  draft: Draft;
+  selectedIndex?: number;
+  onSelectIndex?: (index: number) => void;
+}) {
+  const rows = Array.isArray(draft.cases) ? (draft.cases as Draft[]) : [];
+  const units = String(draft.modelUnits || "N-mm-s");
+  const oneG = units === "N-m-s" ? 9.80665 : 9806.65;
+  const accUnit = units === "N-m-s" ? "m/s²" : "mm/s²";
+  const fmtAcc = (v: number) => (units === "N-m-s" ? v.toFixed(3) : v.toFixed(1));
+
+  if (rows.length === 0) {
+    return <div className="livePreviewPlaceholder">请先在左侧重力工况表中添加至少一行重力工况。</div>;
+  }
+
+  const safeIndex = Math.min(Math.max(0, selectedIndex), rows.length - 1);
+  const parsed = rows.map((r, i) => {
+    const accel = n(r.acceleration);
+    const nx = n(r.nx);
+    const ny = n(r.ny);
+    const nz = n(r.nz);
+    const ax = accel * nx;
+    const ay = accel * ny;
+    const az = accel * nz;
+    const magAcc = Math.hypot(ax, ay, az);
+    const magG = magAcc / oneG;
+    return {
+      index: i,
+      name: String(r.name ?? "").trim() || `工况 #${i + 1}`,
+      cid: String(r.cid ?? "0").trim() || "0",
+      accel,
+      nx,
+      ny,
+      nz,
+      ax,
+      ay,
+      az,
+      magAcc,
+      magG,
+    };
+  });
+
+  const active = parsed[safeIndex];
+  const maxMagG = Math.max(1e-6, ...parsed.map((p) => p.magG));
+
   return (
     <>
-      <VizCard title="重力方向" hint="按模型单位换算，不写入求解器默认单位">
-        <DirectionGizmo vector={vec} label={vec.map((v) => v.toFixed(2)).join(", ")} />
+      <VizCard
+        title="重力方向矢量 (3D)"
+        hint={`高亮 #${safeIndex + 1} ${active.name} · 虚线为其余工况`}
+      >
+        {parsed.length > 1 && (
+          <div className="gravCaseChips" role="tablist" aria-label="选择预览重力工况">
+            {parsed.map((item) => (
+              <button
+                key={item.index}
+                type="button"
+                role="tab"
+                aria-selected={item.index === safeIndex}
+                className={"gravCaseChip" + (item.index === safeIndex ? " active" : "")}
+                onClick={() => onSelectIndex?.(item.index)}
+              >
+                #{item.index + 1} {item.name}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="gravGizmoRow">
+          <GravityVectorGizmo
+            vectors={parsed.map((p) => ({ name: p.name, vector: [p.ax, p.ay, p.az] }))}
+            selectedIndex={safeIndex}
+          />
+          <div className="gravVectorReadout">
+            <div className="gravReadoutItem">
+              <span>方向系数 (N1, N2, N3)</span>
+              <b>({active.nx}, {active.ny}, {active.nz})</b>
+            </div>
+            <div className="gravReadoutItem">
+              <span>加速度分量 ({accUnit})</span>
+              <b>({fmtAcc(active.ax)}, {fmtAcc(active.ay)}, {fmtAcc(active.az)})</b>
+            </div>
+            <div className="gravReadoutItem">
+              <span>等效过载分量 (g)</span>
+              <b>({(active.ax / oneG).toFixed(2)}g, {(active.ay / oneG).toFixed(2)}g, {(active.az / oneG).toFixed(2)}g)</b>
+            </div>
+            <div className="gravReadoutItem">
+              <span>参考坐标系 CID</span>
+              <b>{active.cid}</b>
+            </div>
+          </div>
+        </div>
       </VizCard>
+
       <StatRow
         items={[
-          { label: "幅值", value: n(draft.magnitudeG) + " g" },
-          { label: "约合", value: (n(draft.magnitudeG) * 9806.65).toFixed(0) + " mm/s²" },
-          { label: "CID", value: String(draft.cid ?? "0") },
+          { label: "工况数量", value: `${parsed.length} 个` },
+          { label: "当前工况", value: active.name },
+          { label: "合成加速度", value: `${fmtAcc(active.magAcc)} ${accUnit}`, tone: active.magAcc > 0 ? "on" : "" },
+          { label: "合成过载", value: `${active.magG.toFixed(2)} g`, tone: active.magG > 0 ? "on" : "" },
         ]}
       />
+
+      <VizCard title="各重力工况对比" hint="点击任意行切换上方 3D 高亮矢量">
+        <div className="gravCompareList">
+          {parsed.map((item) => {
+            const isSel = item.index === safeIndex;
+            const pct = Math.min(100, Math.max(2, (item.magG / maxMagG) * 100));
+            return (
+              <button
+                key={item.index}
+                type="button"
+                className={"gravCompareRow" + (isSel ? " active" : "")}
+                onClick={() => onSelectIndex?.(item.index)}
+              >
+                <div className="gravCompareTop">
+                  <span className="gravCompareName">
+                    <em>#{item.index + 1}</em> {item.name}
+                  </span>
+                  <span className="gravCompareVal">
+                    {item.magG.toFixed(2)} g · {fmtAcc(item.magAcc)} {accUnit}
+                  </span>
+                </div>
+                <div className="gravCompareMeta">
+                  <span className="gravCompareCoeff">
+                    系数 ({item.nx}, {item.ny}, {item.nz}) · G={fmtAcc(item.accel)}
+                  </span>
+                  <span className="miniBarTrack">
+                    <i style={{ width: `${item.magG > 0 ? pct : 0}%` }} />
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </VizCard>
     </>
   );
 }
@@ -248,12 +405,25 @@ function NodalPreview({ draft }: { draft: Draft }) {
     loads.reduce((a, r) => a + n(r.fy), 0),
     loads.reduce((a, r) => a + n(r.fz), 0),
   ];
+  const netMoment = Math.hypot(
+    loads.reduce((a, r) => a + n(r.mx), 0),
+    loads.reduce((a, r) => a + n(r.my), 0),
+    loads.reduce((a, r) => a + n(r.mz), 0),
+  );
   const netMag = Math.hypot(net[0], net[1], net[2]);
   return (
     <>
       <VizCard title="合力方向" hint="所有载荷行力矢量的叠加方向">
         {netMag > 0 ? <DirectionGizmo vector={net} label={net.map((v) => v.toFixed(0)).join(", ")} /> : <div className="chartEmpty" style={{ height: 120 }}><span>尚未输入力分量</span></div>}
       </VizCard>
+      <StatRow
+        items={[
+          { label: "节点数", value: String(loads.length) },
+          { label: "合力 |F|", value: `${netMag.toFixed(1)} N`, tone: netMag > 0 ? "on" : "" },
+          { label: "合力矩 |M|", value: netMoment.toFixed(1) },
+          { label: "子工况", value: draft.perRowSubcase ? `${loads.length} 个(逐行)` : "1 个(合并)" },
+        ]}
+      />
       <VizCard title="各节点力大小" hint="单位同模型单位">
         <MiniBars items={bars} unit=" N" />
       </VizCard>
@@ -275,66 +445,65 @@ function ConstraintPreview({ draft }: { draft: Draft }) {
       <StatRow
         items={[
           { label: "约束行", value: String(rows.length) },
-          { label: "模式", value: draft.mode === "reference" ? "仅引用" : "新建 SPC" },
+          { label: "模式", value: draft.mode === "reference" ? "仅引用外部" : draft.combineWithExisting ? "新建 + SPCADD" : "新建 SPC" },
         ]}
       />
     </>
   );
 }
 
-export default function ModulePreview({ activeId, draft }: { activeId: string; draft: Draft }) {
-  let heading = "实时预览";
+export default function ModulePreview({
+  activeId,
+  draft,
+  gravityRowIndex = 0,
+  onSelectGravityRow,
+}: {
+  activeId: string;
+  draft: Draft;
+  gravityRowIndex?: number;
+  onSelectGravityRow?: (index: number) => void;
+}) {
   let body: React.ReactNode = null;
 
   switch (activeId) {
     case "radioss-rops":
-      heading = "ROPS 位移工况";
       body = <RopsPreview draft={draft} fops={false} />;
       break;
     case "radioss-fops":
-      heading = "FOPS 落锤冲击";
       body = <RopsPreview draft={draft} fops />;
       break;
     case "random-psd":
-      heading = "PSD 随机振动";
       body = <PsdPreview draft={draft} />;
       break;
     case "frequency-response":
-      heading = "频率响应";
       body = <FreqResponsePreview draft={draft} />;
       break;
     case "normal-modes":
-      heading = "模态";
       body = <ModalPreview draft={draft} />;
       break;
     case "gravity":
-      heading = "重力";
-      body = <GravityPreview draft={draft} />;
+      body = (
+        <GravityPreview
+          draft={draft}
+          selectedIndex={gravityRowIndex}
+          onSelectIndex={onSelectGravityRow}
+        />
+      );
       break;
     case "nodal-static":
-      heading = "节点力 / 力矩";
       body = <NodalPreview draft={draft} />;
       break;
     case "constraint":
-      heading = "位移约束";
       body = <ConstraintPreview draft={draft} />;
       break;
     default:
-      heading = "实时预览";
       body = <div className="livePreviewPlaceholder">该模块暂无图形化预览。</div>;
   }
 
   return (
     <div className="livePreview">
-      <div className="livePreviewHead">
-        <div>
-          <p className="livePreviewEyebrow"><span className="livePulse" /> LIVE PREVIEW</p>
-          <h3>{heading}</h3>
-        </div>
-        <span className="liveBadge">实时</span>
-      </div>
       <div className="livePreviewBody">{body}</div>
-      <p className="livePreviewNote">预览随输入实时更新，用于填写时校核方向/量级；最终数值以求解器 deck 为准。</p>
+      <p className="livePreviewNote">实时视图随表单输入即时刷新，仅用于几何方向与量级校核；最终卡片文本以“校验 / 预览 Deck”结果为准。</p>
     </div>
   );
 }
