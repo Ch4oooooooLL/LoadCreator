@@ -95,3 +95,31 @@ pub fn migrate_legacy_workspace(legacy: &Value) -> Value {
 pub fn migrate_legacy_workspace_cmd(legacy: Value) -> Value {
     migrate_legacy_workspace(&legacy)
 }
+
+#[tauri::command]
+pub fn save_text_file(path: String, content: String) -> Result<String, String> {
+    let target = PathBuf::from(&path);
+    let Some(parent) = target.parent() else {
+        return Err("模板保存路径无效".into());
+    };
+    if !parent.is_dir() {
+        return Err("模板保存目录不存在".into());
+    }
+    let file_name = target
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("template");
+    let tmp = parent.join(format!(".{file_name}.tmp"));
+    fs::write(&tmp, content).map_err(|e| format!("写入临时模板文件失败：{e}"))?;
+    if let Err(err) = fs::rename(&tmp, &target) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("保存模板文件失败：{err}"));
+    }
+    Ok(target.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+pub fn read_text_file(path: String) -> Result<String, String> {
+    let text = fs::read_to_string(&path).map_err(|e| format!("读取模板文件失败：{e}"))?;
+    Ok(text.strip_prefix('\u{FEFF}').unwrap_or(&text).to_string())
+}

@@ -26,11 +26,53 @@ pub struct LoadRow {
     pub tz: f64,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum WarningSeverity {
+    Error,
+    Warning,
+    Info,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum WarningTargetKind {
+    SourceLine,
+    DataCell,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WarningTarget {
+    pub kind: WarningTargetKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub row_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_line: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadDeckWarning {
+    pub code: String,
+    pub severity: WarningSeverity,
+    pub category: String,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<WarningTarget>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ParseResult {
     pub rows: Vec<LoadRow>,
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub warning_items: Vec<LoadDeckWarning>,
     pub ignored_lines: usize,
 }
 
@@ -43,6 +85,22 @@ pub struct BuildRequest {
     pub case_aliases: BTreeMap<String, String>,
     #[serde(default = "default_tolerance")]
     pub coordinate_tolerance: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidateRowsRequest {
+    pub rows: Vec<LoadRow>,
+    #[serde(default = "default_tolerance")]
+    pub coordinate_tolerance: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidateRowsResult {
+    pub warnings: Vec<String>,
+    #[serde(default)]
+    pub warning_items: Vec<LoadDeckWarning>,
 }
 
 fn default_tolerance() -> f64 {
@@ -80,6 +138,8 @@ pub struct BuildResult {
     pub points: Vec<PointEntry>,
     pub cases: Vec<CaseSummary>,
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub warning_items: Vec<LoadDeckWarning>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -266,7 +326,7 @@ pub fn parse_clipboard_table(text: String) -> Result<ParseResult, String> {
     }
     let mut rows = Vec::new();
     let mut warnings = Vec::new();
-    let mut ignored_lines = 0;
+    let mut ignored_details: Vec<(usize, &'static str)> = Vec::new();
     let mut cols: Option<Columns> = None;
     let mut case_name = "Load Case 1".to_string();
     let mut carried_group = String::new();
@@ -289,7 +349,7 @@ pub fn parse_clipboard_table(text: String) -> Result<ParseResult, String> {
             continue;
         }
         let Some(c) = cols else {
-            ignored_lines += 1;
+            ignored_details.push((line_no, "尚未识别到表头"));
             continue;
         };
         let required = [c.x, c.y, c.z, c.fx, c.fy, c.fz];
@@ -300,7 +360,7 @@ pub fn parse_clipboard_table(text: String) -> Result<ParseResult, String> {
             Some(i) => *i >= cells.len(),
             None => true,
         }) {
-            ignored_lines += 1;
+            ignored_details.push((line_no, "缺少必要列"));
             continue;
         }
         let get = |index: Option<usize>| index.and_then(|i| cells.get(i));
@@ -309,31 +369,31 @@ pub fn parse_clipboard_table(text: String) -> Result<ParseResult, String> {
             .map(|index| clean(get(*index).copied().unwrap_or_default()))
             .collect();
         if raw_required.iter().all(|value| value.is_empty()) {
-            ignored_lines += 1;
+            ignored_details.push((line_no, "坐标与载荷列为空"));
             continue;
         }
         let Some(x) = parse_number(get(c.x)) else {
-            ignored_lines += 1;
+            ignored_details.push((line_no, "X 数值无法解析"));
             continue;
         };
         let Some(y) = parse_number(get(c.y)) else {
-            ignored_lines += 1;
+            ignored_details.push((line_no, "Y 数值无法解析"));
             continue;
         };
         let Some(z) = parse_number(get(c.z)) else {
-            ignored_lines += 1;
+            ignored_details.push((line_no, "Z 数值无法解析"));
             continue;
         };
         let Some(fx) = parse_number(get(c.fx)) else {
-            ignored_lines += 1;
+            ignored_details.push((line_no, "FX 数值无法解析"));
             continue;
         };
         let Some(fy) = parse_number(get(c.fy)) else {
-            ignored_lines += 1;
+            ignored_details.push((line_no, "FY 数值无法解析"));
             continue;
         };
         let Some(fz) = parse_number(get(c.fz)) else {
-            ignored_lines += 1;
+            ignored_details.push((line_no, "FZ 数值无法解析"));
             continue;
         };
 
@@ -373,14 +433,35 @@ pub fn parse_clipboard_table(text: String) -> Result<ParseResult, String> {
                 .into(),
         );
     }
+    let ignored_lines = ignored_details.len();
+    let mut warning_items = Vec::new();
     if ignored_lines > 0 {
-        warnings.push(format!(
+        let message = format!(
             "已忽略 {ignored_lines} 行标题、空行或无法解析的数据"
-        ));
+        );
+        let targets = ignored_details
+            .iter()
+            .map(|(line_no, reason)| WarningTarget {
+                kind: WarningTargetKind::SourceLine,
+                label: Some(format!("第 {line_no} 行 · {reason}")),
+                row_index: None,
+                source_line: Some(*line_no),
+                fields: Vec::new(),
+            })
+            .collect();
+        warnings.push(message.clone());
+        warning_items.push(LoadDeckWarning {
+            code: "PARSE_IGNORED_LINES".into(),
+            severity: WarningSeverity::Warning,
+            category: "解析忽略".into(),
+            message,
+            targets,
+        });
     }
     Ok(ParseResult {
         rows,
         warnings,
+        warning_items,
         ignored_lines,
     })
 }
@@ -393,13 +474,44 @@ fn finite(value: f64, field: &str, row_number: usize) -> Result<(), String> {
     }
 }
 
-fn coord_key(x: f64, y: f64, z: f64, tolerance: f64) -> String {
-    let t = if tolerance.is_finite() && tolerance > 0.0 {
+fn effective_tolerance(tolerance: f64) -> f64 {
+    if tolerance.is_finite() && tolerance > 0.0 {
         tolerance
     } else {
         default_tolerance()
-    };
+    }
+}
+
+fn coord_key(x: f64, y: f64, z: f64, tolerance: f64) -> String {
+    if !x.is_finite() || !y.is_finite() || !z.is_finite() {
+        return format!(
+            "nonfinite:{}:{}:{}",
+            x.is_finite(),
+            y.is_finite(),
+            z.is_finite()
+        );
+    }
+    let t = effective_tolerance(tolerance);
     format!("{:.0}:{:.0}:{:.0}", x / t, y / t, z / t)
+}
+
+fn diff_coordinate_fields(first: &LoadRow, current: &LoadRow, tolerance: f64) -> Vec<String> {
+    let t = effective_tolerance(tolerance);
+    let mut fields = Vec::new();
+    if !first.x.is_finite() || !current.x.is_finite() || (first.x - current.x).abs() > t {
+        fields.push("x".into());
+    }
+    if !first.y.is_finite() || !current.y.is_finite() || (first.y - current.y).abs() > t {
+        fields.push("y".into());
+    }
+    if !first.z.is_finite() || !current.z.is_finite() || (first.z - current.z).abs() > t {
+        fields.push("z".into());
+    }
+    if fields.is_empty() {
+        vec!["x".into(), "y".into(), "z".into()]
+    } else {
+        fields
+    }
 }
 
 pub fn fmt(value: f64) -> String {
@@ -541,35 +653,61 @@ fn unique_fem_names(case_names: &[String], preferred: &BTreeMap<String, String>)
         .collect()
 }
 
-#[tauri::command]
-pub fn build_load_deck(request: BuildRequest) -> Result<BuildResult, String> {
-    if request.rows.is_empty() {
-        return Err("没有可导出的载荷数据".into());
-    }
+struct AnalyzedRows {
+    points: Vec<PointEntry>,
+    row_nodes: Vec<u64>,
+    warnings: Vec<String>,
+    warning_items: Vec<LoadDeckWarning>,
+}
+
+fn analyze_rows(
+    rows: &[LoadRow],
+    coordinate_tolerance: f64,
+    stop_on_non_finite: bool,
+) -> Result<AnalyzedRows, String> {
     let mut points = Vec::<PointEntry>::new();
     let mut point_by_name = HashMap::<String, usize>::new();
     let mut first_point_by_english_name = HashMap::<String, usize>::new();
     let mut first_point_by_coordinate = HashMap::<String, usize>::new();
     let mut first_row_by_point = Vec::<usize>::new();
     let mut warned_name_coordinates = HashSet::<String>::new();
-    let mut row_nodes = Vec::with_capacity(request.rows.len());
+    let mut row_nodes = Vec::with_capacity(rows.len());
     let mut warnings = Vec::new();
+    let mut warning_items = Vec::new();
 
-    for (index, row) in request.rows.iter().enumerate() {
-        for (field, value) in [
-            ("X", row.x),
-            ("Y", row.y),
-            ("Z", row.z),
-            ("FX", row.fx),
-            ("FY", row.fy),
-            ("FZ", row.fz),
-            ("TX", row.tx),
-            ("TY", row.ty),
-            ("TZ", row.tz),
+    for (index, row) in rows.iter().enumerate() {
+        for (field_label, field_key, value) in [
+            ("X", "x", row.x),
+            ("Y", "y", row.y),
+            ("Z", "z", row.z),
+            ("FX", "fx", row.fx),
+            ("FY", "fy", row.fy),
+            ("FZ", "fz", row.fz),
+            ("TX", "tx", row.tx),
+            ("TY", "ty", row.ty),
+            ("TZ", "tz", row.tz),
         ] {
-            finite(value, field, index + 1)?;
+            if stop_on_non_finite {
+                finite(value, field_label, index + 1)?;
+            } else if !value.is_finite() {
+                let message = format!("第 {} 条数据的 {} 不是有限数值", index + 1, field_label);
+                warnings.push(message.clone());
+                warning_items.push(LoadDeckWarning {
+                    code: "NON_FINITE_VALUE".into(),
+                    severity: WarningSeverity::Error,
+                    category: "数值无效".into(),
+                    message,
+                    targets: vec![WarningTarget {
+                        kind: WarningTargetKind::DataCell,
+                        label: Some(format!("第 {} 条 · {}", index + 1, field_label)),
+                        row_index: Some(index),
+                        source_line: None,
+                        fields: vec![field_key.into()],
+                    }],
+                });
+            }
         }
-        let coordinate_key = coord_key(row.x, row.y, row.z, request.coordinate_tolerance);
+        let coordinate_key = coord_key(row.x, row.y, row.z, coordinate_tolerance);
         let fallback_english_name = format!("point_{}", index + 1);
         let raw_english_name = row.point_name.trim();
         let english_name = safe_name(raw_english_name, &fallback_english_name);
@@ -579,45 +717,141 @@ pub fn build_load_deck(request: BuildRequest) -> Result<BuildResult, String> {
             row.display_name.trim()
         };
         if row.display_name.trim().is_empty() {
-            warnings.push(format!(
+            let message = format!(
                 "第 {} 条数据的点位“{}”缺少中文名称，暂以英文名作为归并索引；请补充中文点位名",
                 index + 1,
                 english_name
-            ));
+            );
+            warnings.push(message.clone());
+            warning_items.push(LoadDeckWarning {
+                code: "MISSING_DISPLAY_NAME".into(),
+                severity: WarningSeverity::Warning,
+                category: "缺少中文名".into(),
+                message,
+                targets: vec![WarningTarget {
+                    kind: WarningTargetKind::DataCell,
+                    label: Some(format!("第 {} 条 · 中文点位名", index + 1)),
+                    row_index: Some(index),
+                    source_line: None,
+                    fields: vec!["displayName".into()],
+                }],
+            });
         }
         if raw_english_name.is_empty() {
-            warnings.push(format!(
+            let message = format!(
                 "第 {} 条数据的点位“{}”缺少英文名称，JSON 暂使用自动名称“{}”；请补充英文点位名",
                 index + 1,
                 display_name,
                 english_name
-            ));
+            );
+            warnings.push(message.clone());
+            warning_items.push(LoadDeckWarning {
+                code: "MISSING_POINT_NAME".into(),
+                severity: WarningSeverity::Warning,
+                category: "缺少英文名".into(),
+                message,
+                targets: vec![WarningTarget {
+                    kind: WarningTargetKind::DataCell,
+                    label: Some(format!("第 {} 条 · 英文点位名", index + 1)),
+                    row_index: Some(index),
+                    source_line: None,
+                    fields: vec!["pointName".into()],
+                }],
+            });
         } else if english_name != raw_english_name {
-            warnings.push(format!("第 {} 条数据的点位“{}”的英文名“{}”包含中文、空格或不兼容字符，JSON/FEM 暂使用“{}”；请修改英文名", index + 1, display_name, raw_english_name, english_name));
+            let message = format!(
+                "第 {} 条数据的点位“{}”的英文名“{}”包含中文、空格或不兼容字符，JSON/FEM 暂使用“{}”；请修改英文名",
+                index + 1,
+                display_name,
+                raw_english_name,
+                english_name
+            );
+            warnings.push(message.clone());
+            warning_items.push(LoadDeckWarning {
+                code: "INVALID_POINT_NAME".into(),
+                severity: WarningSeverity::Warning,
+                category: "英文名不规范".into(),
+                message,
+                targets: vec![WarningTarget {
+                    kind: WarningTargetKind::DataCell,
+                    label: Some(format!("第 {} 条 · 英文点位名", index + 1)),
+                    row_index: Some(index),
+                    source_line: None,
+                    fields: vec!["pointName".into()],
+                }],
+            });
         }
         let point_index = if let Some(existing) = point_by_name.get(display_name).copied() {
             let existing_coordinate = coord_key(
                 points[existing].x,
                 points[existing].y,
                 points[existing].z,
-                request.coordinate_tolerance,
+                coordinate_tolerance,
             );
+            let first_row = first_row_by_point[existing];
             if points[existing].english_name != english_name {
-                warnings.push(format!(
+                let message = format!(
                     "中文点位“{}”对应了不同英文名：第 {} 条数据为“{}”，第 {} 条数据为“{}”；JSON 暂保留首次英文名，请统一后重新生成",
-                    display_name, first_row_by_point[existing] + 1, points[existing].english_name, index + 1, english_name
-                ));
+                    display_name, first_row + 1, points[existing].english_name, index + 1, english_name
+                );
+                warnings.push(message.clone());
+                warning_items.push(LoadDeckWarning {
+                    code: "CONFLICTING_POINT_NAME".into(),
+                    severity: WarningSeverity::Warning,
+                    category: "英文名不一致".into(),
+                    message,
+                    targets: vec![
+                        WarningTarget {
+                            kind: WarningTargetKind::DataCell,
+                            label: Some(format!("第 {} 条 ({})", first_row + 1, points[existing].english_name)),
+                            row_index: Some(first_row),
+                            source_line: None,
+                            fields: vec!["pointName".into()],
+                        },
+                        WarningTarget {
+                            kind: WarningTargetKind::DataCell,
+                            label: Some(format!("第 {} 条 ({})", index + 1, english_name)),
+                            row_index: Some(index),
+                            source_line: None,
+                            fields: vec!["pointName".into()],
+                        },
+                    ],
+                });
             }
             if existing_coordinate != coordinate_key
                 && warned_name_coordinates.insert(format!("{display_name}:{coordinate_key}"))
             {
-                let first = &request.rows[first_row_by_point[existing]];
-                warnings.push(format!(
+                let first = &rows[first_row];
+                let diff_fields = diff_coordinate_fields(first, row, coordinate_tolerance);
+                let message = format!(
                     "中文点位“{}”的坐标不一致：第 {} 条数据为 ({}, {}, {})，第 {} 条数据为 ({}, {}, {})；JSON 暂保留首次坐标，请统一坐标后重新生成",
-                    display_name, first_row_by_point[existing] + 1,
+                    display_name, first_row + 1,
                     coord_text(first.x), coord_text(first.y), coord_text(first.z), index + 1,
                     coord_text(row.x), coord_text(row.y), coord_text(row.z),
-                ));
+                );
+                warnings.push(message.clone());
+                warning_items.push(LoadDeckWarning {
+                    code: "INCONSISTENT_COORDINATES".into(),
+                    severity: WarningSeverity::Warning,
+                    category: "坐标不一致".into(),
+                    message,
+                    targets: vec![
+                        WarningTarget {
+                            kind: WarningTargetKind::DataCell,
+                            label: Some(format!("第 {} 条 · 坐标", first_row + 1)),
+                            row_index: Some(first_row),
+                            source_line: None,
+                            fields: diff_fields.clone(),
+                        },
+                        WarningTarget {
+                            kind: WarningTargetKind::DataCell,
+                            label: Some(format!("第 {} 条 · 坐标", index + 1)),
+                            row_index: Some(index),
+                            source_line: None,
+                            fields: diff_fields,
+                        },
+                    ],
+                });
             }
             existing
         } else {
@@ -638,20 +872,68 @@ pub fn build_load_deck(request: BuildRequest) -> Result<BuildResult, String> {
             point_by_name.insert(display_name.to_string(), idx);
             let english_key = english_name.to_lowercase();
             if let Some(existing) = first_point_by_english_name.get(&english_key).copied() {
-                let first = &request.rows[first_row_by_point[existing]];
-                warnings.push(format!(
+                let first_row = first_row_by_point[existing];
+                let first = &rows[first_row];
+                let message = format!(
                     "中文点位“{}”（第 {} 条数据）与“{}”（第 {} 条数据）使用了相同英文名“{}”；JSON 将为后者追加节点号以防覆盖，请修改英文名",
-                    first.display_name, first_row_by_point[existing] + 1, display_name, index + 1, english_name
-                ));
+                    first.display_name, first_row + 1, display_name, index + 1, english_name
+                );
+                warnings.push(message.clone());
+                warning_items.push(LoadDeckWarning {
+                    code: "DUPLICATE_POINT_NAME".into(),
+                    severity: WarningSeverity::Warning,
+                    category: "英文名重复".into(),
+                    message,
+                    targets: vec![
+                        WarningTarget {
+                            kind: WarningTargetKind::DataCell,
+                            label: Some(format!("第 {} 条 · {}", first_row + 1, first.display_name)),
+                            row_index: Some(first_row),
+                            source_line: None,
+                            fields: vec!["pointName".into()],
+                        },
+                        WarningTarget {
+                            kind: WarningTargetKind::DataCell,
+                            label: Some(format!("第 {} 条 · {}", index + 1, display_name)),
+                            row_index: Some(index),
+                            source_line: None,
+                            fields: vec!["pointName".into()],
+                        },
+                    ],
+                });
             } else {
                 first_point_by_english_name.insert(english_key, idx);
             }
             if let Some(existing) = first_point_by_coordinate.get(&coordinate_key).copied() {
-                warnings.push(format!(
+                let first_row = first_row_by_point[existing];
+                let message = format!(
                     "点位“{}”（第 {} 条数据）与“{}”（第 {} 条数据）使用相同坐标 ({}, {}, {})；已按名称分别生成节点和 JSON 记录，请检查左右点坐标并完成修改",
-                    points[existing].name, first_row_by_point[existing] + 1, display_name, index + 1,
+                    points[existing].name, first_row + 1, display_name, index + 1,
                     coord_text(row.x), coord_text(row.y), coord_text(row.z),
-                ));
+                );
+                warnings.push(message.clone());
+                warning_items.push(LoadDeckWarning {
+                    code: "DUPLICATE_COORDINATES".into(),
+                    severity: WarningSeverity::Warning,
+                    category: "坐标相同".into(),
+                    message,
+                    targets: vec![
+                        WarningTarget {
+                            kind: WarningTargetKind::DataCell,
+                            label: Some(format!("第 {} 条 · {}", first_row + 1, points[existing].name)),
+                            row_index: Some(first_row),
+                            source_line: None,
+                            fields: vec!["x".into(), "y".into(), "z".into()],
+                        },
+                        WarningTarget {
+                            kind: WarningTargetKind::DataCell,
+                            label: Some(format!("第 {} 条 · {}", index + 1, display_name)),
+                            row_index: Some(index),
+                            source_line: None,
+                            fields: vec!["x".into(), "y".into(), "z".into()],
+                        },
+                    ],
+                });
             } else {
                 first_point_by_coordinate.insert(coordinate_key, idx);
             }
@@ -659,6 +941,42 @@ pub fn build_load_deck(request: BuildRequest) -> Result<BuildResult, String> {
         };
         row_nodes.push(points[point_index].node_id);
     }
+
+    Ok(AnalyzedRows {
+        points,
+        row_nodes,
+        warnings,
+        warning_items,
+    })
+}
+
+#[tauri::command]
+pub fn validate_load_rows(request: ValidateRowsRequest) -> ValidateRowsResult {
+    if request.rows.is_empty() {
+        return ValidateRowsResult {
+            warnings: Vec::new(),
+            warning_items: Vec::new(),
+        };
+    }
+    let analyzed = analyze_rows(&request.rows, request.coordinate_tolerance, false)
+        .expect("non-stopping validation should never fail");
+    ValidateRowsResult {
+        warnings: analyzed.warnings,
+        warning_items: analyzed.warning_items,
+    }
+}
+
+#[tauri::command]
+pub fn build_load_deck(request: BuildRequest) -> Result<BuildResult, String> {
+    if request.rows.is_empty() {
+        return Err("没有可导出的载荷数据".into());
+    }
+    let AnalyzedRows {
+        points,
+        row_nodes,
+        warnings,
+        warning_items,
+    } = analyze_rows(&request.rows, request.coordinate_tolerance, true)?;
 
     let mut case_order = Vec::<String>::new();
     let mut case_rows = BTreeMap::<String, Vec<usize>>::new();
@@ -763,8 +1081,20 @@ pub fn build_load_deck(request: BuildRequest) -> Result<BuildResult, String> {
     }
     fem.push_str("ENDDATA\n");
 
+    let json = points_to_json(&points)?;
+    Ok(BuildResult {
+        fem,
+        json,
+        points,
+        cases,
+        warnings,
+        warning_items,
+    })
+}
+
+pub fn points_to_json(points: &[PointEntry]) -> Result<String, String> {
     let mut json_map = serde_json::Map::new();
-    for point in &points {
+    for point in points {
         let mut json_key = point.english_name.clone();
         if json_map.contains_key(&json_key) {
             json_key = format!("{}_{}", point.english_name, point.node_id);
@@ -780,10 +1110,121 @@ pub fn build_load_deck(request: BuildRequest) -> Result<BuildResult, String> {
             }),
         );
     }
-    let json = serde_json::to_string_pretty(&json_map).map_err(|e| e.to_string())?;
-    Ok(BuildResult {
-        fem,
-        json,
+    serde_json::to_string_pretty(&json_map).map_err(|e| e.to_string())
+}
+
+pub struct TabularFragmentOutput {
+    pub points: Vec<PointEntry>,
+    pub cases: Vec<CaseSummary>,
+    pub warnings: Vec<String>,
+}
+
+pub fn generate_tabular_into(
+    spec: &crate::core::case_spec::TabularLoadSpec,
+    key_prefix: &str,
+    spc_sid: Option<u64>,
+    ctx: &mut crate::core::deck_ir::GenerationContext,
+    frag: &mut crate::core::deck_ir::DeckFragment,
+) -> Result<TabularFragmentOutput, String> {
+    if spec.rows.is_empty() {
+        return Err("整车工况表没有可生成的载荷行".into());
+    }
+    let AnalyzedRows {
+        points,
+        row_nodes,
+        warnings,
+        ..
+    } = analyze_rows(&spec.rows, spec.coordinate_tolerance, true)?;
+
+    for w in &warnings {
+        ctx.warn("LC-TABULAR-001", w.clone());
+    }
+
+    let mut case_order = Vec::<String>::new();
+    let mut case_rows = BTreeMap::<String, Vec<usize>>::new();
+    for (index, row) in spec.rows.iter().enumerate() {
+        let name = if row.case_name.trim().is_empty() {
+            "Load Case 1"
+        } else {
+            row.case_name.trim()
+        };
+        if !case_rows.contains_key(name) {
+            case_order.push(name.to_string());
+        }
+        case_rows.entry(name.to_string()).or_default().push(index);
+    }
+
+    let fem_case_names = unique_fem_names(&case_order, &spec.case_aliases);
+    for point in &points {
+        ctx.metadata(
+            "NODES",
+            point.node_id,
+            safe_name(&point.english_name, &format!("point_{}", point.node_id)),
+        );
+    }
+
+    let mut cases = Vec::new();
+    for (case_index, case_name) in case_order.iter().enumerate() {
+        let sc = ctx.allocate(
+            crate::core::ids::IdKind::Subcase,
+            &format!("{key_prefix}#sub#{case_index}"),
+        );
+        let load_id = ctx.allocate(
+            crate::core::ids::IdKind::Load,
+            &format!("{key_prefix}#load#{case_index}"),
+        );
+        let fem_name = &fem_case_names[case_index];
+        let tag = format!("{:03}_{fem_name}", case_index + 1);
+        let collector_name = safe_name(&format!("LC_{tag}"), &format!("LC_{:03}", case_index + 1));
+        let load_step_name = safe_name(&format!("LS_{tag}"), &format!("LS_{:03}", case_index + 1));
+
+        ctx.metadata("LOADCOLS", load_id, collector_name.clone());
+        ctx.metadata("LOADSTEPS", sc, load_step_name.clone());
+
+        for row_index in &case_rows[case_name] {
+            let row = &spec.rows[*row_index];
+            let node = row_nodes[*row_index];
+            if row.fx != 0.0 || row.fy != 0.0 || row.fz != 0.0 {
+                frag.bulk_cards.push(crate::core::cards::BulkCard::Force {
+                    sid: load_id,
+                    gid: node,
+                    cid: 0,
+                    scale: 1.0,
+                    f: crate::core::cards::Vec3::new(row.fx, row.fy, row.fz),
+                });
+            }
+            if row.tx != 0.0 || row.ty != 0.0 || row.tz != 0.0 {
+                frag.bulk_cards.push(crate::core::cards::BulkCard::Moment {
+                    sid: load_id,
+                    gid: node,
+                    cid: 0,
+                    scale: 1.0,
+                    m: crate::core::cards::Vec3::new(row.tx, row.ty, row.tz),
+                });
+            }
+        }
+
+        frag.subcases.push(crate::core::deck_ir::Subcase {
+            id: sc,
+            label: load_step_name.clone(),
+            analysis: Some("STATICS".into()),
+            spc: spc_sid,
+            load: Some(load_id),
+            outputs: crate::modules::static_outputs("STATIC_BASIC"),
+            ..Default::default()
+        });
+
+        cases.push(CaseSummary {
+            name: case_name.clone(),
+            fem_name: fem_name.clone(),
+            collector_name,
+            load_step_name,
+            load_id,
+            row_count: case_rows[case_name].len(),
+        });
+    }
+
+    Ok(TabularFragmentOutput {
         points,
         cases,
         warnings,
