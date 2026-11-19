@@ -1,7 +1,6 @@
 # Radioss P0 导入性可行性验证（NOT_RUN）
 
-> 本目录为 SPEC v1.0 第 2 节 P0 的**证据脚手架**。当前环境无 HyperMesh 2023.0 / Radioss 2022
-> 授权，三个实验均 **NOT_RUN**，未生成任何 p0_*.rad / p0_starter.out，也未伪造 PASS。
+> 本目录记录 SPEC v1.0 第 2 节的正式 P0 验收条件。已另用 HyperMesh 2023.0 和 Radioss 2026.1 对两套小型测试模型做追加导入及求解冒烟验证。正式的 Radioss 2022 验收仍记为 **NOT_RUN**。
 
 ## 环境（待填写实测）
 - HyperMesh 版本：2023.0（非 2023.1/2023.2）

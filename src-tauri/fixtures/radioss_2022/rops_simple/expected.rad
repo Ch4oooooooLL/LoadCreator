@@ -12,9 +12,9 @@
 # ---- Starter increment ----
 /BEGIN
 ROPS_CASE
-2022
-kg mm ms
-kg mm ms
+      2022
+                  kg                  mm                  ms
+                  kg                  mm                  ms
 /GRNOD/NODE/800001
 ROPS_CASE_1_LOAD
       1001
@@ -32,5 +32,5 @@ ROPS_CASE_1_IMPDISP
                  1.0                 1.0                                        
 /BCS/830001
 ROPS_CASE_1_BCS_1
-    111000         0    800002
+   111 000         0    800002
 /END

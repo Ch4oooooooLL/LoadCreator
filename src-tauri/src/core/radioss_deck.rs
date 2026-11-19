@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 
 use crate::core::diagnostics::Diagnostic;
+use crate::core::radioss_spec::RadiossContactThermal;
 
 #[derive(Debug, Clone)]
 pub enum StarterCard {
@@ -58,6 +59,85 @@ pub enum StarterCard {
     Ams {
         part_group_id: u64,
     },
+    SkewFix {
+        id: u64,
+        title: String,
+        origin: [f64; 3],
+        y_axis: [f64; 3],
+        z_axis: [f64; 3],
+    },
+    InterType7 {
+        id: u64,
+        title: String,
+        slave_grnod_id: u64,
+        master_surf_id: u64,
+        istf: i32,
+        ithe: i32,
+        igap: i32,
+        ibag: i32,
+        idel: i32,
+        icurv: i32,
+        iadm: i32,
+        curv_node_id1: Option<u64>,
+        curv_node_id2: Option<u64>,
+        fscale_gap: f64,
+        gap_max: f64,
+        fpenmax: f64,
+        i_tied: i32,
+        st_min: f64,
+        st_max: f64,
+        percent_mesh_size: f64,
+        dtmin: f64,
+        irem_gap: i32,
+        irem_i2: i32,
+        stfac: f64,
+        fric: f64,
+        gap_min: f64,
+        t_start: f64,
+        t_stop: f64,
+        ibc: String,
+        inacti: i32,
+        vis_s: f64,
+        vis_f: f64,
+        bumult: f64,
+        ifric: i32,
+        ifiltr: i32,
+        xfreq: f64,
+        iform: i32,
+        sens_id: u64,
+        fct_id_f: u64,
+        ascale_f: f64,
+        fric_id: u64,
+        c1: f64,
+        c2: f64,
+        c3: f64,
+        c4: f64,
+        c5: f64,
+        c6: f64,
+        thermal: Option<RadiossContactThermal>,
+    },
+    TimeHistoryNode {
+        id: u64,
+        title: String,
+        variables: Vec<String>,
+        nodes: Vec<(u64, u64, String)>,
+    },
+    TimeHistoryElement {
+        /// "SPRING" | "BEAM"
+        kind: String,
+        id: u64,
+        title: String,
+        variables: Vec<String>,
+        elements: Vec<(u64, String)>,
+    },
+    TimeHistoryObject {
+        /// "RBODY" | "RWALL" | "INTER" | "SECTIO" | "PART"
+        kind: String,
+        id: u64,
+        title: String,
+        variables: Vec<String>,
+        object_ids: Vec<u64>,
+    },
 }
 
 impl StarterCard {
@@ -69,23 +149,61 @@ impl StarterCard {
             StarterCard::Boundary { .. } => "/BCS",
             StarterCard::Gravity { .. } => "/GRAV",
             StarterCard::Ams { .. } => "/AMS",
+            StarterCard::SkewFix { .. } => "/SKEW/FIX",
+            StarterCard::InterType7 { .. } => "/INTER/TYPE7",
+            StarterCard::TimeHistoryNode { .. } => "/TH/NODE",
+            StarterCard::TimeHistoryElement { kind, .. } => match kind.as_str() {
+                "BEAM" => "/TH/BEAM",
+                _ => "/TH/SPRING",
+            },
+            StarterCard::TimeHistoryObject { kind, .. } => match kind.as_str() {
+                "RBODY" => "/TH/RBODY",
+                "RWALL" => "/TH/RWALL",
+                "INTER" => "/TH/INTER",
+                "SECTIO" => "/TH/SECTIO",
+                "PART" => "/TH/PART",
+                _ => "/TH/RBODY",
+            },
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub enum EngineCard {
+    Vers {
+        version: u32,
+    },
     Run {
         name: String,
         number: u32,
         t_stop: f64,
     },
+    Parith {
+        on: bool,
+    },
+    Print {
+        n_print: i32,
+        n_line: i32,
+    },
     AnimationDt {
         t_start: f64,
         t_freq: f64,
     },
+    AnimElem {
+        option: String,
+    },
+    AnimNoda {
+        option: String,
+    },
+    AnimVect {
+        option: String,
+    },
     TimeHistory {
+        file_type: Option<u32>,
         interval: f64,
+    },
+    TimeHistoryVersion {
+        version: u32,
     },
     NodalCst {
         scale: f64,
@@ -100,9 +218,16 @@ pub enum EngineCard {
 impl EngineCard {
     pub fn keyword(&self) -> &'static str {
         match self {
+            EngineCard::Vers { .. } => "/VERS",
             EngineCard::Run { .. } => "/RUN",
+            EngineCard::Parith { .. } => "/PARITH",
+            EngineCard::Print { .. } => "/PRINT",
             EngineCard::AnimationDt { .. } => "/ANIM/DT",
+            EngineCard::AnimElem { .. } => "/ANIM/ELEM",
+            EngineCard::AnimNoda { .. } => "/ANIM/NODA",
+            EngineCard::AnimVect { .. } => "/ANIM/VECT",
             EngineCard::TimeHistory { .. } => "/TFILE",
+            EngineCard::TimeHistoryVersion { .. } => "/TH/VERS",
             EngineCard::NodalCst { .. } => "/DT/NODA/CST",
             EngineCard::AmsDt { .. } => "/DT/AMS",
         }
@@ -123,6 +248,9 @@ pub enum RadIdKind {
     Impdisp,
     Bcs,
     Grav,
+    Inter,
+    Skew,
+    Th,
 }
 
 impl RadIdKind {
@@ -133,6 +261,9 @@ impl RadIdKind {
             RadIdKind::Impdisp => "impdisp",
             RadIdKind::Bcs => "bcs",
             RadIdKind::Grav => "grav",
+            RadIdKind::Inter => "inter",
+            RadIdKind::Skew => "skew",
+            RadIdKind::Th => "th",
         }
     }
     pub fn offset(self) -> u64 {
@@ -142,6 +273,9 @@ impl RadIdKind {
             RadIdKind::Impdisp => 20_001,
             RadIdKind::Bcs => 30_001,
             RadIdKind::Grav => 40_001,
+            RadIdKind::Inter => 50_001,
+            RadIdKind::Skew => 60_001,
+            RadIdKind::Th => 70_001,
         }
     }
 }
@@ -196,6 +330,9 @@ impl RadiossIdAllocator {
             RadIdKind::Impdisp,
             RadIdKind::Bcs,
             RadIdKind::Grav,
+            RadIdKind::Inter,
+            RadIdKind::Skew,
+            RadIdKind::Th,
         ] {
             next.insert(kind, base.saturating_add(kind.offset()));
         }

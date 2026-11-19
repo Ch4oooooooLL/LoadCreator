@@ -61,6 +61,43 @@ pub fn generate(spec: &RadiossFopsSpec) -> RadiossBuilt {
         ));
     }
 
+    let active_grav_count = if !spec.base.gravities.is_empty() {
+        spec.base.gravities.iter().filter(|g| g.enabled).count()
+    } else {
+        usize::from(spec.base.gravity.as_ref().is_some_and(|g| g.enabled))
+    };
+    if active_grav_count == 0 {
+        extra.push(
+            Diagnostic::warning(
+                "LC-FOPS-003",
+                "FOPS 落锤冲击当前未启用重力场 (/GRAV)：实际仿真通常需配置重力场及重力加载曲线（如 0→1g 斜坡预平衡）",
+            )
+            .field("base.gravities"),
+        );
+    } else {
+        let curve_count = if !spec.base.gravities.is_empty() {
+            spec.base
+                .gravities
+                .iter()
+                .filter(|g| g.enabled && g.mode.eq_ignore_ascii_case("curve"))
+                .count()
+        } else {
+            usize::from(
+                spec.base
+                    .gravity
+                    .as_ref()
+                    .is_some_and(|g| g.enabled && g.mode.eq_ignore_ascii_case("curve")),
+            )
+        };
+        extra.push(Diagnostic::info(
+            "LC-FOPS-003",
+            format!(
+                "FOPS 重力场已启用：共 {} 个 /GRAV 工况（其中 {} 个采用重力曲线 /FUNCT 驱动）",
+                active_grav_count, curve_count
+            ),
+        ));
+    }
+
     built.diagnostics.extend(extra);
     built
 }

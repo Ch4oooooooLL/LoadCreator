@@ -109,12 +109,28 @@ pub struct RadiossCurvePoint {
     pub value: f64,
 }
 
+fn default_direction() -> String {
+    "X".into()
+}
+fn default_direction_mode() -> String {
+    "axis".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RadiossLoading {
-    /// "X" | "Y" | "Z"
+    /// "axis" (standard +/- X,Y,Z,XX,YY,ZZ) or "vector" (custom 3D vector via /SKEW/FIX).
+    #[serde(default = "default_direction_mode")]
+    pub direction_mode: String,
+    /// "X" | "+X" | "-X" | "Y" | "+Y" | "-Y" | "Z" | "+Z" | "-Z" | "XX" | ...
     #[serde(default = "default_direction")]
     pub direction: String,
+    /// Custom 3D direction vector [dx, dy, dz] when direction_mode == "vector".
+    #[serde(default)]
+    pub direction_vector: Option<[f64; 3]>,
+    /// Optional origin [ox, oy, oz] for generated /SKEW/FIX (defaults to [0, 0, 0]).
+    #[serde(default)]
+    pub vector_origin: Option<[f64; 3]>,
     #[serde(default)]
     pub curve: Vec<RadiossCurvePoint>,
     #[serde(default)]
@@ -124,9 +140,6 @@ pub struct RadiossLoading {
     /// Optional existing local Skew id for the imposed displacement (0 = global).
     #[serde(default)]
     pub skew_id: Option<u64>,
-}
-fn default_direction() -> String {
-    "X".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,6 +173,51 @@ pub enum RadiossTimeStep {
     },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RadiossEngineControl {
+    /// ENG_VERS: emit `/VERS/<version_num>`
+    #[serde(default)]
+    pub emit_vers: bool,
+    #[serde(default = "default_vers_num")]
+    pub version_num: u32,
+    /// ENG_PARITH: None = omit, Some(true) = `/PARITH/ON`, Some(false) = `/PARITH/OFF`
+    #[serde(default)]
+    pub parith: Option<bool>,
+    /// ENG_PRINT: emit `/PRINT/<n_print>[/<n_line>]`
+    #[serde(default)]
+    pub emit_print: bool,
+    #[serde(default = "default_n_print")]
+    pub n_print: i32,
+    #[serde(default)]
+    pub n_line: i32,
+    /// ENG_TFILE Type: None or Some(0) = built-in format (`/TFILE`), 1..=4 = `/TFILE/<type>`
+    #[serde(default)]
+    pub tfile_type: Option<u32>,
+    /// When false, omit `/TFILE`; absence retains the default T-file output.
+    #[serde(default)]
+    pub emit_tfile: Option<bool>,
+    /// Time-history post-processing schema (`/TH/VERS`), independent of TFILE encoding.
+    #[serde(default)]
+    pub th_version: Option<u32>,
+    /// ENG_ANIM_ELEM result keywords (e.g. "EPSP", "ENERGY", "VONM", "PRES", "HOURG", ...)
+    #[serde(default)]
+    pub anim_elem: Vec<String>,
+    /// ENG_ANIM_NODA result keywords (e.g. "DMAS", "DT", ...)
+    #[serde(default)]
+    pub anim_noda: Vec<String>,
+    /// ENG_ANIM_VECT result keywords (e.g. "ACC", "CONT", "DISP", ...)
+    #[serde(default)]
+    pub anim_vect: Vec<String>,
+}
+
+fn default_vers_num() -> u32 {
+    2022
+}
+fn default_n_print() -> i32 {
+    -1000
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RadiossEngine {
@@ -167,19 +225,114 @@ pub struct RadiossEngine {
     pub animation: RadiossAnimation,
     pub time_history_interval: f64,
     pub time_step: RadiossTimeStep,
+    #[serde(default)]
+    pub control: Option<RadiossEngineControl>,
 }
 
-/// Optional constant gravity (/GRAV). magnitude is a signed acceleration in the
-/// work unit system; direction selects the axis.
+fn default_grav_mode() -> String {
+    "constant".into()
+}
+
+/// Gravity load (/GRAV), supporting constant acceleration or time-varying curve (/FUNCT).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RadiossGravity {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
+    pub title: String,
+    /// "constant" (fct_IDT = 0) or "curve" (uses `curve` -> /FUNCT or `existing_funct_id`)
+    #[serde(default = "default_grav_mode")]
+    pub mode: String,
+    /// Signed acceleration magnitude in work units (for constant mode, or reference 1g scale in curve mode).
+    #[serde(default)]
     pub magnitude: f64,
+    /// "X" | "+X" | "-X" | "Y" | "+Y" | "-Y" | "Z" | "+Z" | "-Z"
     #[serde(default = "default_direction")]
     pub direction: String,
+    /// Abscissa (time) scale factor Ascale_x (default 1.0).
+    #[serde(default = "default_one")]
+    pub a_scale: f64,
+    /// Optional explicit ordinate scale factor Fscale_Y (overrides `magnitude` when present).
+    #[serde(default)]
+    pub f_scale: Option<f64>,
+    /// Optional existing external /FUNCT ID when `mode == "curve"` and `curve` is empty.
+    #[serde(default)]
+    pub existing_funct_id: Option<u64>,
+    /// Optional time-varying gravity curve points (`time`, `value`) -> generates `/FUNCT/<id>`.
+    #[serde(default)]
+    pub curve: Vec<RadiossCurvePoint>,
+    /// Optional local Skew ID (0 = global).
+    #[serde(default)]
+    pub skew_id: Option<u64>,
+    /// Optional Sensor ID (0 = active from t=0).
+    #[serde(default)]
+    pub sensor_id: Option<u64>,
+    /// Optional node group /GRNOD ID (0 or None = whole model).
+    #[serde(default)]
+    pub grnod_id: Option<u64>,
+}
+
+/// Standalone / extra Radioss `/FUNCT` curve entry for tabular management & export.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RadiossFunctionSpec {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub explicit_id: Option<u64>,
+    #[serde(default)]
+    pub points: Vec<RadiossCurvePoint>,
+    #[serde(default)]
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RadiossThNodeEntry {
+    pub node_id: u64,
+    #[serde(default)]
+    pub skew_id: u64,
+    #[serde(default)]
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RadiossThElemEntry {
+    pub elem_id: u64,
+    #[serde(default)]
+    pub label: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Radioss Time History (`/TH/<TYPE>`) output request card.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RadiossTimeHistory {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// "spring" | "beam" | "sectio" | "rbody" | "rwall" | "node" | "inter" | "part"
+    pub kind: String,
+    /// Engineering role tag (e.g. "bolt", "bcs", "rwall-rbe2", "rwall-node", "contact", "part", "custom")
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub variables: Vec<String>,
+    #[serde(default)]
+    pub nodes: Vec<RadiossThNodeEntry>,
+    #[serde(default)]
+    pub elements: Vec<RadiossThElemEntry>,
+    #[serde(default)]
+    pub object_ids: Vec<u64>,
+    /// Optional 0-based indices into `spec.contacts` to automatically bind generated `/INTER/TYPE7` IDs.
+    #[serde(default)]
+    pub contact_indices: Vec<usize>,
 }
 
 /// Deterministic generated-id policy. generated_start is the base; each entity
@@ -202,6 +355,166 @@ impl Default for RadiossIdPolicy {
     }
 }
 
+fn default_istf() -> i32 {
+    4
+}
+fn default_igap() -> i32 {
+    2
+}
+fn default_idel() -> i32 {
+    2
+}
+fn default_one() -> f64 {
+    1.0
+}
+fn default_mesh_size() -> f64 {
+    0.4
+}
+fn default_irem_gap() -> i32 {
+    2
+}
+fn default_ibc() -> String {
+    "000".into()
+}
+fn default_inacti() -> i32 {
+    6
+}
+fn default_iform() -> i32 {
+    2
+}
+
+/// Optional TYPE7 thermal continuation rows, required when Ithe = 1.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RadiossContactThermal {
+    #[serde(default)]
+    pub coefficient: f64,
+    #[serde(default)]
+    pub function_id: u64,
+    #[serde(default)]
+    pub interface_temperature: f64,
+    #[serde(default)]
+    pub formulation: i32,
+    #[serde(default = "default_one")]
+    pub pressure_scale: f64,
+    #[serde(default)]
+    pub radiation_factor: f64,
+    #[serde(default)]
+    pub radiation_distance: f64,
+    #[serde(default)]
+    pub secondary_friction_heat: f64,
+    #[serde(default)]
+    pub main_friction_heat: f64,
+}
+
+/// Radioss 2022 `/INTER/TYPE7` contact interface specification for tool-to-model
+/// (e.g. ROPS crush platen / FOPS drop-hammer vs cab/protective structure) contact.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RadiossContact {
+    #[serde(default)]
+    pub title: String,
+    /// Secondary (slave) node group Set ID (`grnd_IDs`, `/GRNOD`, model side).
+    pub slave_grnod_id: u64,
+    /// Main (master) surface Set ID (`surf_IDm`, `/SURF`, tooling side).
+    pub master_surf_id: u64,
+    // ---- Card 1 ----
+    #[serde(default = "default_istf")]
+    pub istf: i32,
+    #[serde(default)]
+    pub ithe: i32,
+    #[serde(default = "default_igap")]
+    pub igap: i32,
+    #[serde(default)]
+    pub ibag: i32,
+    #[serde(default = "default_idel")]
+    pub idel: i32,
+    #[serde(default)]
+    pub icurv: i32,
+    #[serde(default)]
+    pub iadm: i32,
+    #[serde(default)]
+    pub curv_node_id1: Option<u64>,
+    #[serde(default)]
+    pub curv_node_id2: Option<u64>,
+    // ---- Card 2 ----
+    #[serde(default = "default_one")]
+    pub fscale_gap: f64,
+    #[serde(default)]
+    pub gap_max: f64,
+    #[serde(default)]
+    pub fpenmax: f64,
+    #[serde(default)]
+    pub i_tied: i32,
+    // ---- Card 3 ----
+    #[serde(default)]
+    pub st_min: f64,
+    #[serde(default)]
+    pub st_max: f64,
+    #[serde(default = "default_mesh_size")]
+    pub percent_mesh_size: f64,
+    #[serde(default)]
+    pub dtmin: f64,
+    #[serde(default = "default_irem_gap")]
+    pub irem_gap: i32,
+    #[serde(default)]
+    pub irem_i2: i32,
+    // ---- Card 4 ----
+    #[serde(default = "default_one")]
+    pub stfac: f64,
+    #[serde(default)]
+    pub fric: f64,
+    #[serde(default)]
+    pub gap_min: f64,
+    #[serde(default)]
+    pub t_start: f64,
+    #[serde(default)]
+    pub t_stop: f64,
+    // ---- Card 5 ----
+    #[serde(default = "default_ibc")]
+    pub ibc: String,
+    #[serde(default = "default_inacti")]
+    pub inacti: i32,
+    #[serde(default)]
+    pub vis_s: f64,
+    #[serde(default)]
+    pub vis_f: f64,
+    #[serde(default)]
+    pub bumult: f64,
+    // ---- Card 6 ----
+    #[serde(default)]
+    pub ifric: i32,
+    #[serde(default)]
+    pub ifiltr: i32,
+    #[serde(default)]
+    pub xfreq: f64,
+    #[serde(default = "default_iform")]
+    pub iform: i32,
+    #[serde(default)]
+    pub sens_id: u64,
+    #[serde(default)]
+    pub fct_id_f: u64,
+    #[serde(default)]
+    pub ascale_f: f64,
+    #[serde(default)]
+    pub fric_id: u64,
+    // ---- Optional Card 7/8 (when ifric > 0) ----
+    #[serde(default)]
+    pub c1: f64,
+    #[serde(default)]
+    pub c2: f64,
+    #[serde(default)]
+    pub c3: f64,
+    #[serde(default)]
+    pub c4: f64,
+    #[serde(default)]
+    pub c5: f64,
+    #[serde(default)]
+    pub c6: f64,
+    #[serde(default)]
+    pub thermal: Option<RadiossContactThermal>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RadiossRopsSpec {
@@ -220,6 +533,14 @@ pub struct RadiossRopsSpec {
     pub engine: RadiossEngine,
     #[serde(default)]
     pub gravity: Option<RadiossGravity>,
+    #[serde(default)]
+    pub gravities: Vec<RadiossGravity>,
+    #[serde(default)]
+    pub functions: Vec<RadiossFunctionSpec>,
+    #[serde(default)]
+    pub time_histories: Vec<RadiossTimeHistory>,
+    #[serde(default)]
+    pub contacts: Vec<RadiossContact>,
     #[serde(default)]
     pub id_policy: RadiossIdPolicy,
 }

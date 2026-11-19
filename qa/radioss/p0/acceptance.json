@@ -20,5 +20,5 @@
       "notes": "往返导出与求解"
     }
   },
-  "reason": "无 HyperMesh 2023.0 / Radioss 2022 授权环境，未执行亦未伪造实测结果"
+  "reason": "已完成 HyperMesh 2023.0 及 Radioss 2026.1 测试模型冒烟验证，尚未完成目标组合的完整 P0 验收。"
 }

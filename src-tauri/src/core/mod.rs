@@ -12,6 +12,7 @@ pub mod ids;
 pub mod psd;
 pub mod psd_import;
 pub mod radioss_deck;
+pub mod radioss_functions_io;
 pub mod radioss_spec;
 pub mod references;
 pub mod units;

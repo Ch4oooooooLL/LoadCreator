@@ -71,6 +71,16 @@ pub fn real_field(width: usize, value: f64) -> Result<String, Diagnostic> {
 pub fn i10(value: u64) -> Result<String, Diagnostic> {
     int_field(10, value)
 }
+pub fn i10_i32(value: i32) -> Result<String, Diagnostic> {
+    let text = value.to_string();
+    if text.len() > 10 {
+        return Err(Diagnostic::error(
+            "LC-DECK-001",
+            format!("整数 {value} 超出 10 字符字段"),
+        ));
+    }
+    Ok(format!("{text:>10}"))
+}
 pub fn t10(value: &str) -> Result<String, Diagnostic> {
     text_field(10, value)
 }
@@ -78,9 +88,10 @@ pub fn e20(value: f64) -> Result<String, Diagnostic> {
     real_field(20, value)
 }
 
-/// Six DOF booleans -> right-justified 10-char Trarot code (SPEC /BCS).
+/// /BCS Trarot has three translation flags, a reserved column, then three rotation flags.
 pub fn dof_code(dofs: &[bool; 6]) -> String {
-    dofs.iter()
-        .map(|fixed| if *fixed { '1' } else { '0' })
-        .collect()
+    let flags = |start: usize| -> String {
+        dofs[start..start + 3].iter().map(|fixed| if *fixed { '1' } else { '0' }).collect()
+    };
+    format!("{} {}", flags(0), flags(3))
 }
