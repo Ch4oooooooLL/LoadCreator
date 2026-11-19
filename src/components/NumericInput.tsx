@@ -5,6 +5,7 @@ interface NumericInputProps {
   onCommit: (value: number) => void;
   className?: string;
   placeholder?: string;
+  dataCellField?: string;
 }
 
 /**
@@ -12,7 +13,7 @@ interface NumericInputProps {
  * intermediate states such as "-", "1." or "0.15" without the value snapping
  * back to 0 (a known pitfall of directly controlled number inputs).
  */
-export default function NumericInput({ value, onCommit, className, placeholder }: NumericInputProps) {
+export default function NumericInput({ value, onCommit, className, placeholder, dataCellField }: NumericInputProps) {
   const [text, setText] = useState(() => String(value));
   const focused = useRef(false);
 
@@ -28,6 +29,7 @@ export default function NumericInput({ value, onCommit, className, placeholder }
       spellCheck={false}
       placeholder={placeholder}
       className={className ? `numberInput ${className}` : "numberInput"}
+      data-cell-field={dataCellField}
       value={text}
       onFocus={() => { focused.current = true; }}
       onChange={(event) => {

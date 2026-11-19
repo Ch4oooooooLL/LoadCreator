@@ -1,10 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { BuildResult, ExportResult, LoadRow, ParseResult } from "@/types/loadDeck";
+import type { BuildResult, ExportResult, LoadRow, ParseResult, ValidateRowsResult } from "@/types/loadDeck";
 
 export const isDesktop = () => "__TAURI_INTERNALS__" in window;
 
 export async function parseClipboardTable(text: string): Promise<ParseResult> {
   return invoke<ParseResult>("parse_clipboard_table", { text });
+}
+
+export async function validateLoadRows(rows: LoadRow[], coordinateTolerance = 1e-6): Promise<ValidateRowsResult> {
+  return invoke<ValidateRowsResult>("validate_load_rows", { request: { rows, coordinateTolerance } });
 }
 
 export async function buildLoadDeck(projectName: string, rows: LoadRow[], caseAliases: Record<string, string>, coordinateTolerance = 1e-6): Promise<BuildResult> {

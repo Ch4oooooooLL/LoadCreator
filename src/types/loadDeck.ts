@@ -16,9 +16,29 @@ export interface LoadRow {
   tz: number;
 }
 
+export type WarningSeverity = "error" | "warning" | "info";
+export type WarningTargetKind = "sourceLine" | "dataCell";
+
+export interface WarningTarget {
+  kind: WarningTargetKind;
+  label?: string;
+  rowIndex?: number;
+  sourceLine?: number;
+  fields?: string[];
+}
+
+export interface LoadDeckWarning {
+  code: string;
+  severity: WarningSeverity;
+  category: string;
+  message: string;
+  targets: WarningTarget[];
+}
+
 export interface ParseResult {
   rows: LoadRow[];
   warnings: string[];
+  warningItems?: LoadDeckWarning[];
   ignoredLines: number;
 }
 
@@ -56,6 +76,12 @@ export interface BuildResult {
   points: PointEntry[];
   cases: CaseSummary[];
   warnings: string[];
+  warningItems?: LoadDeckWarning[];
+}
+
+export interface ValidateRowsResult {
+  warnings: string[];
+  warningItems: LoadDeckWarning[];
 }
 
 export interface ExportResult {

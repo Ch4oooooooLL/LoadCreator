@@ -68,11 +68,52 @@ export function suggestCaseAlias(name: string, index: number, rules: MappingRule
   return ascii || `loadcase_${index + 1}`;
 }
 
+/** Warn when two different cases resolve to the same in-model alias. */
+export interface AliasConflictItem {
+  alias: string;
+  caseNames: string[];
+  message: string;
+}
+
+export interface MappingIssueTarget {
+  ruleIndex: number;
+  field: "keywords" | "englishName";
+  label: string;
+}
+
+export interface MappingIssueItem {
+  id: string;
+  message: string;
+  targets: MappingIssueTarget[];
+}
+
 /** Detect duplicate / overlapping rules and ambiguous case matches. */
-export function mappingIssues(rules: MappingRule[], caseNames: string[]): string[] {
-  const issues = new Set<string>();
+export function mappingIssueItems(rules: MappingRule[], caseNames: string[]): MappingIssueItem[] {
+  const items: MappingIssueItem[] = [];
+  const seen = new Set<string>();
+  const add = (id: string, message: string, targets: MappingIssueTarget[]) => {
+    if (seen.has(message)) return;
+    seen.add(message);
+    items.push({ id, message, targets });
+  };
+
   rules.forEach((rule, index) => {
-    if (ruleKeywordGroups(rule).length === 0 || !rule.englishName.trim()) issues.add(`第 ${index + 1} 条规则不完整，不会参与匹配`);
+    const missingKeywords = ruleKeywordGroups(rule).length === 0;
+    const missingEnglish = !rule.englishName.trim();
+    if (missingKeywords || missingEnglish) {
+      const targets: MappingIssueTarget[] = [];
+      if (missingKeywords) {
+        targets.push({ ruleIndex: index, field: "keywords", label: `第 ${index + 1} 条 · 关键词` });
+      }
+      if (missingEnglish) {
+        targets.push({ ruleIndex: index, field: "englishName", label: `第 ${index + 1} 条 · 英文名称` });
+      }
+      add(
+        `incomplete:${index}`,
+        `第 ${index + 1} 条规则不完整，不会参与匹配`,
+        targets,
+      );
+    }
   });
   for (let left = 0; left < rules.length; left += 1) {
     const leftGroups = ruleKeywordGroups(rules[left]);
@@ -82,26 +123,65 @@ export function mappingIssues(rules: MappingRule[], caseNames: string[]): string
       if (!rightGroups.length) continue;
       const groupPairs = leftGroups.flatMap((leftKeys) => rightGroups.map((rightKeys) => ({ leftKeys, rightKeys })));
       const sameKeywords = groupPairs.some(({ leftKeys, rightKeys }) => leftKeys.length === rightKeys.length && leftKeys.every((key) => rightKeys.includes(key)));
-      if (sameKeywords) issues.add(`第 ${left + 1}、${right + 1} 条关键词重复，请删除或修改其中一条`);
-      if (rules[left].englishName.trim() && rules[left].englishName.trim() === rules[right].englishName.trim()) issues.add(`第 ${left + 1}、${right + 1} 条英文名称相同，可能导致模型名称自动加序号`);
+      if (sameKeywords) {
+        add(
+          `dup-kw:${left},${right}`,
+          `第 ${left + 1}、${right + 1} 条关键词重复，请删除或修改其中一条`,
+          [
+            { ruleIndex: left, field: "keywords", label: `第 ${left + 1} 条` },
+            { ruleIndex: right, field: "keywords", label: `第 ${right + 1} 条` },
+          ],
+        );
+      }
+      if (rules[left].englishName.trim() && rules[left].englishName.trim() === rules[right].englishName.trim()) {
+        add(
+          `dup-en:${left},${right}`,
+          `第 ${left + 1}、${right + 1} 条英文名称相同，可能导致模型名称自动加序号`,
+          [
+            { ruleIndex: left, field: "englishName", label: `第 ${left + 1} 条` },
+            { ruleIndex: right, field: "englishName", label: `第 ${right + 1} 条` },
+          ],
+        );
+      }
     }
   }
   caseNames.forEach((name) => {
     const matches = matchingRules(name, rules);
-    if (matches.length > 1) issues.add(`“${name}”同时命中 ${matches.length} 条规则，将使用“${matches[0].rule.englishName}”`);
+    if (matches.length > 1) {
+      add(
+        `multi-match:${name}`,
+        `“${name}”同时命中 ${matches.length} 条规则，将使用“${matches[0].rule.englishName}”`,
+        matches.map((match) => ({
+          ruleIndex: match.index,
+          field: "keywords",
+          label: `第 ${match.index + 1} 条 (${match.rule.englishName})`,
+        })),
+      );
+    }
   });
-  return [...issues];
+  return items;
 }
 
-/** Warn when two different cases resolve to the same in-model alias. */
-export function aliasConflicts(resolved: Record<string, string>): string[] {
+export function mappingIssues(rules: MappingRule[], caseNames: string[]): string[] {
+  return mappingIssueItems(rules, caseNames).map((item) => item.message);
+}
+
+export function aliasConflictItems(resolved: Record<string, string>): AliasConflictItem[] {
   const byAlias = new Map<string, string[]>();
   Object.entries(resolved).forEach(([caseName, alias]) => {
     const key = alias.trim().toLowerCase();
     if (!key) return;
     byAlias.set(key, [...(byAlias.get(key) ?? []), caseName]);
   });
-  return [...byAlias.values()]
-    .filter((names) => names.length > 1)
-    .map((names) => `工况 ${names.map((name) => `“${name}”`).join("、")} 的模型内名称相同，生成时会自动追加序号，建议区分`);
+  return [...byAlias.entries()]
+    .filter(([, names]) => names.length > 1)
+    .map(([alias, names]) => ({
+      alias,
+      caseNames: names,
+      message: `工况 ${names.map((name) => `“${name}”`).join("、")} 的模型内名称相同，生成时会自动追加序号，建议区分`,
+    }));
+}
+
+export function aliasConflicts(resolved: Record<string, string>): string[] {
+  return aliasConflictItems(resolved).map((item) => item.message);
 }
